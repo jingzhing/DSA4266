@@ -1,6 +1,6 @@
 CONFIG = {
-    "train_dir": "data/deepdetect-2025_dddata/train",
-    "test_dir": "data/deepdetect-2025_dddata/test",
+    "train_dir": "data/deepdetect-2025/ddata/train",
+    "test_dir": "data/deepdetect-2025/ddata/test",
     "val_ratio": 0.1,
 
     "img_size": 224,
