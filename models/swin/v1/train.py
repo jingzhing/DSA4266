@@ -59,14 +59,15 @@ def eval_on_loader(model, loader, device, threshold_metric):
     with torch.no_grad():
         for x, y in tqdm(loader, desc="Val", leave=False):
             x = x.to(device, non_blocking=True)
-            logits = model(x).squeeze(1).detach().cpu().numpy()  # (B,)
+            logits = model(x).squeeze(1).detach().cpu().numpy()
             all_logits.append(logits)
             all_y.append(y.numpy())
 
     all_logits = np.concatenate(all_logits)
     all_y = np.concatenate(all_y).astype(int)
 
-    probs_fake = sigmoid(all_logits)  # interpret as P(fake=1)
+    probs_fake = sigmoid(all_logits)  # P(fake=1)
+
     auc = None
     try:
         auc = roc_auc_score(all_y, probs_fake)
@@ -91,30 +92,35 @@ def main():
     os.makedirs(cfg["output_dir"], exist_ok=True)
 
     img_size = cfg["img_size"]
-    imagenet_mean = (0.485, 0.456, 0.406)
-    imagenet_std = (0.229, 0.224, 0.225)
+    mean = (0.485, 0.456, 0.406)
+    std = (0.229, 0.224, 0.225)
 
     train_tf = transforms.Compose([
         transforms.RandomResizedCrop(img_size, scale=(0.8, 1.0)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(imagenet_mean, imagenet_std),
+        transforms.Normalize(mean, std),
     ])
 
     val_tf = transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
-        transforms.Normalize(imagenet_mean, imagenet_std),
+        transforms.Normalize(mean, std),
     ])
 
     full_ds = ImageFolder(cfg["train_dir"], transform=train_tf)
 
-    # Label mapping: fake=0, real=1 in your run.
-    # We'll redefine for binary training: y=1 means FAKE, y=0 means REAL.
-    # So we must remap targets accordingly.
-    # If your mapping is {'fake':0,'real':1}, then y_fake = (target == 0).
-    if full_ds.class_to_idx != {"fake": 0, "real": 1} and "fake" in full_ds.class_to_idx and "real" in full_ds.class_to_idx:
-        pass
+    classes = full_ds.classes
+    class_to_idx = full_ds.class_to_idx
+
+    if "fake" not in class_to_idx or "real" not in class_to_idx:
+        raise RuntimeError(f"Expected classes fake/real. Got: {classes} mapping={class_to_idx}")
+
+    fake_idx = class_to_idx["fake"]
+    real_idx = class_to_idx["real"]
+
+    print("Classes:", classes)
+    print("Mapping:", class_to_idx)
 
     n_total = len(full_ds)
     n_val = int(n_total * cfg["val_ratio"])
@@ -127,20 +133,15 @@ def main():
     )
     val_ds.dataset.transform = val_tf
 
-    classes = full_ds.classes
-    class_to_idx = full_ds.class_to_idx
-    print("Classes:", classes)
-    print("Mapping:", class_to_idx)
     print("Total train folder size:", n_total)
     print("Train split size:", len(train_ds))
     print("Val split size:", len(val_ds))
 
-    # Build counts on TRAIN split with remapping (fake=1)
-    train_targets_orig = np.array(full_ds.targets)[train_ds.indices]  # 0=fake, 1=real
-    train_targets_bin = (train_targets_orig == class_to_idx.get("fake", 0)).astype(int)  # fake->1, real->0
-    fake_count = int(train_targets_bin.sum())
-    real_count = int(len(train_targets_bin) - fake_count)
-    print("Train split counts (real=0, fake=1):", [real_count, fake_count])
+    train_targets_orig = np.array(full_ds.targets)[train_ds.indices]  # fake_idx or real_idx
+    y_train_bin = (train_targets_orig == fake_idx).astype(int)        # fake=1, real=0
+    fake_count = int(y_train_bin.sum())
+    real_count = int(len(y_train_bin) - fake_count)
+    print("Train split counts (real=0,fake=1):", [real_count, fake_count])
 
     train_loader = DataLoader(
         train_ds,
@@ -160,10 +161,9 @@ def main():
     model = build_model(cfg["model_name"]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"])
 
-    # pos_weight is weight for positive class (fake=1)
-    pos_weight = torch.tensor([real_count / (fake_count + 1e-12)], dtype=torch.float32).to(device)
-    loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    print("Using BCEWithLogitsLoss pos_weight (fake=1):", float(pos_weight.item()))
+    # IMPORTANT CHANGE: no pos_weight (your dataset is near-balanced)
+    loss_fn = torch.nn.BCEWithLogitsLoss()
+    print("Using BCEWithLogitsLoss with NO pos_weight")
 
     best_val_score = -1.0
     best_path = os.path.join(cfg["checkpoint_dir"], "best.pt")
@@ -174,11 +174,10 @@ def main():
 
         for x, y in tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg['epochs']} Train"):
             x = x.to(device, non_blocking=True)
-            # remap y: fake->1, real->0
-            y_bin = (y == class_to_idx.get("fake", 0)).float().to(device, non_blocking=True)
+            y_bin = (y == fake_idx).float().to(device, non_blocking=True)  # fake=1, real=0
 
             opt.zero_grad(set_to_none=True)
-            logits = model(x).squeeze(1)  # (B,)
+            logits = model(x).squeeze(1)
             loss = loss_fn(logits, y_bin)
             loss.backward()
             opt.step()

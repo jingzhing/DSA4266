@@ -2,17 +2,34 @@ import os
 import shutil
 import kagglehub
 
-kaggle_id = "ayushmandatta1/deepdetect-2025"
+DATASET_ID = "ayushmandatta1/deepdetect-2025"
 
-src_path = kagglehub.dataset_download(kaggle_id)
-print("Kagglehub cache path:", src_path)
+def ensure_dirs():
+    os.makedirs("data", exist_ok=True)
+    os.makedirs("outputs", exist_ok=True)
+    os.makedirs("models/swin/v1/checkpoints", exist_ok=True)
 
-dst_root = os.path.join(os.getcwd(), "data", "deepdetect-2025")
+def download_dataset():
+    print("Downloading dataset from KaggleHub...")
+    src_path = kagglehub.dataset_download(DATASET_ID)
+    print("Downloaded to cache:", src_path)
 
-if os.path.exists(dst_root):
-    print("Already exists:", dst_root)
-else:
-    shutil.copytree(src_path, dst_root)
-    print("Copied dataset to:", dst_root)
+    target_dir = os.path.join("data", "deepdetect-2025_dddata")
 
-print("Top-level files:", os.listdir(dst_root)[:50])
+    if os.path.exists(target_dir):
+        print("Dataset already exists at:", target_dir)
+        return
+
+    print("Copying dataset to project data folder...")
+    shutil.copytree(src_path, target_dir)
+
+    print("Dataset copied to:", target_dir)
+    print("Top-level folders:", os.listdir(target_dir))
+
+def main():
+    ensure_dirs()
+    download_dataset()
+    print("Setup complete.")
+
+if __name__ == "__main__":
+    main()
