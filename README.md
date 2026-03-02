@@ -27,35 +27,6 @@ We focus on:
 - Proper validation-based threshold selection
 - Balanced evaluation metrics (not just raw accuracy)
 
----
-
-# Repository Structure
-
-DSA4266/
-│
-├── models/
-│   ├── swin/
-│   │   └── v1/
-│   │       ├── train.py
-│   │       ├── test.py
-│   │       ├── model_utils.py
-│   │       ├── config.py
-│   │       └── checkpoints/ (created locally)
-│   │
-│   └── efficientnet/ (TO UPDATE — pending implementation)
-│
-├── scripts/
-│   ├── setup_data.py
-│   ├── data_shortcut.py
-│
-├── data/ (created locally, not committed)
-├── outputs/ (created locally, not committed)
-├── requirements.txt
-├── README.md
-└── .gitignore
-
----
-
 # Setup Guide (For New Users)
 
 ## 1. Clone Repository
@@ -105,19 +76,9 @@ This script will:
 - Download DeepDetect-2025 from KaggleHub
 - Copy dataset into:
 
-data/deepdetect-2025_dddata/
+data/deepdetect-2025/ddata/
 
-Expected dataset structure:
 
-data/deepdetect-2025_dddata/
-├── train/
-│   ├── real/
-│   └── fake/
-└── test/
-    ├── real/
-    └── fake/
-
----
 
 # Models Implemented
 
@@ -301,8 +262,11 @@ This ensures strong generalization testing.
 
 # Contributors
 
-- Your Name  
-- Friend Name (EfficientNet implementation pending)
+- Jing Zhi Ng
+- Sze Yui xxx
+- Alexendra
+- Dillon?
+- Joshua
 
 ---
 
