@@ -61,10 +61,6 @@ pip install -r requirements.txt
 
 Run:
 
-python scripts/setup_data.py  
-
-OR if using shortcut:
-
 python scripts/data_shortcut.py  
 
 This script will:
