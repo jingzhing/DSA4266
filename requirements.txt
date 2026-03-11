@@ -7,3 +7,7 @@ scikit-learn
 pillow
 tqdm
 matplotlib
+opencv-python
+tensorflow
+numpy
+yt_dlp
