@@ -1,36 +1,48 @@
-import cv2
-import random as rand
-import yt_dlp
-import os
+"""Compatibility wrappers for optional video frame enrichment stage."""
 
-def download_video(url):
-    ydl_opts = {
-    'format': 'bestvideo',
-    'quiet': True,
-    'merge_output_format': 'mp4',
-    'outtmpl': 'yt_dl.%(ext)s',
-    }
-    video_url = url
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([video_url])
+from pathlib import Path
+from typing import Any, Dict
 
-def get_vid_frames(path):
-    vid = cv2.VideoCapture(path)
-    frame_val = 0
-    total_frames = int(vid.get(cv2.CAP_PROP_FRAME_COUNT))
-    while frame_val < total_frames:
-        vid.set(cv2.CAP_PROP_POS_FRAMES, frame_val)
-        ret, frame = vid.read()
-        if ret:
-            laplace = cv2.Laplacian(frame, cv2.CV_64F).var()
-            if laplace > 7:
-                cv2.imwrite(f"./frames/{frame_val}_clear.jpg", frame) ## Saves to frames folder
-        frame_val += rand.randint(100, 600)
-    vid.release()
-    os.remove(path) #  delete file after processing
+from pipeline.video import download_and_extract, download_video as _download_video, extract_clear_frames
 
-def download_and_process(url):
-    download_video(url)
-    print(os.getcwd())
-    get_vid_frames("yt_dl.mp4")
+
+def download_video(url: str, download_dir: str = "data/raw/video_frames/downloads") -> str:
+    path = _download_video(url=url, download_dir=Path(download_dir))
+    return str(path)
+
+
+def get_vid_frames(
+    path: str,
+    output_dir: str = "data/raw/video_frames/extracted",
+    blur_threshold: float = 7.0,
+    min_frame_stride: int = 100,
+    max_frame_stride: int = 600,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    return extract_clear_frames(
+        video_path=Path(path),
+        output_dir=Path(output_dir),
+        blur_threshold=blur_threshold,
+        min_frame_stride=min_frame_stride,
+        max_frame_stride=max_frame_stride,
+        seed=seed,
+    )
+
+
+def download_and_process(
+    url: str,
+    output_dir: str = "data/raw/video_frames/extracted",
+    download_dir: str = "data/raw/video_frames/downloads",
+    cleanup_video_file: bool = True,
+) -> Dict[str, Any]:
+    return download_and_extract(
+        url=url,
+        download_dir=Path(download_dir),
+        output_dir=Path(output_dir),
+        blur_threshold=7.0,
+        min_frame_stride=100,
+        max_frame_stride=600,
+        seed=42,
+        cleanup_video_file=cleanup_video_file,
+    )
 

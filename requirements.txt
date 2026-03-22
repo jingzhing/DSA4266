@@ -1,13 +1,3 @@
-torch
-torchvision
-timm
-kagglehub
-pandas
-scikit-learn
-pillow
-tqdm
-matplotlib
-opencv-python
-tensorflow
-numpy
-yt_dlp
+-r requirements/base.txt
+-r requirements/swin.txt
+-r requirements/efficientnet.txt

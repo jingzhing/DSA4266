@@ -1,35 +1,21 @@
-import os
-import shutil
-import kagglehub
+"""Compatibility entrypoint for dataset setup.
 
-DATASET_ID = "ayushmandatta1/deepdetect-2025"
+This script now delegates to the unified pipeline stage:
+    python -m pipeline.cli setup --config configs/pipeline.yaml
+"""
 
-def ensure_dirs():
-    os.makedirs("data", exist_ok=True)
-    os.makedirs("outputs", exist_ok=True)
-    os.makedirs("models/swin/v1/checkpoints", exist_ok=True)
+from pipeline.config import load_config
+from pipeline.stages import run_setup
+from pathlib import Path
 
-def download_dataset():
-    print("Downloading dataset from KaggleHub...")
-    src_path = kagglehub.dataset_download(DATASET_ID)
-    print("Downloaded to cache:", src_path)
+DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "pipeline.yaml"
 
-    target_dir = os.path.join("data", "deepdetect-2025_dddata")
 
-    if os.path.exists(target_dir):
-        print("Dataset already exists at:", target_dir)
-        return
+def main() -> None:
+    cfg = load_config(DEFAULT_CONFIG)
+    result = run_setup(cfg=cfg, force=False)
+    print(result)
 
-    print("Copying dataset to project data folder...")
-    shutil.copytree(src_path, target_dir)
-
-    print("Dataset copied to:", target_dir)
-    print("Top-level folders:", os.listdir(target_dir))
-
-def main():
-    ensure_dirs()
-    download_dataset()
-    print("Setup complete.")
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,78 @@
+project:
+  name: DSA4266-ai-image-detection
+  seed: 42
+
+paths:
+  data_root: data
+  raw_root: data/raw
+  prepared_root: data/prepared
+  outputs_root: outputs/runs
+
+data:
+  dataset_id: ayushmandatta1/deepdetect-2025
+  dataset_version: deepdetect-2025
+  raw_train_subdir: ddata/train
+  raw_test_subdir: ddata/test
+  class_names:
+    - real
+    - fake
+  skip_download: false
+
+video:
+  enabled: false
+  output_subdir: video_frames
+  blur_threshold: 7.0
+  min_frame_stride: 100
+  max_frame_stride: 600
+  seed: 42
+  cleanup_video_file: true
+
+prepare:
+  val_ratio: 0.1
+  overwrite: false
+  copy_test_from_raw: true
+  augmentation:
+    enabled: true
+    target_class: fake
+    max_multiplier: 1.25
+    probabilities:
+      hflip: 0.5
+      vflip: 0.1
+      gaussian_blur: 0.25
+      random_erase: 0.2
+    erase_area_range: [0.05, 0.2]
+    blur_kernel: 5
+    blur_sigma_min: 0.3
+    blur_sigma_max: 1.5
+
+models:
+  swin:
+    model_name: swin_tiny_patch4_window7_224
+    img_size: 224
+    batch_size: 16
+    epochs: 12
+    lr: 0.0001
+    num_workers: 2
+  efficientnet:
+    variant: B0
+    img_size: 224
+    batch_size: 16
+    epochs: 5
+    lr: 0.0001
+    freeze_backbone: true
+    dropout: 0.3
+
+training:
+  threshold_metric: balanced_acc
+  default_threshold: 0.5
+  runtime_augmentation: false
+
+evaluation:
+  save_confusion_matrix: true
+
+inference:
+  default_input: ""
+
+artifacts:
+  tag: default
+  overwrite: false

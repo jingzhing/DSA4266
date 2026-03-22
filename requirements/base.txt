@@ -1,0 +1,10 @@
+numpy
+pandas
+pillow
+scikit-learn
+matplotlib
+tqdm
+PyYAML
+opencv-python
+kagglehub
+yt_dlp

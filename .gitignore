@@ -3,7 +3,12 @@ __pycache__/
 *.pyc
 outputs/
 data/
+data/raw/
+data/processed/
 models/**/checkpoints/
 models/**/runs/
 .ipynb_checkpoints/
 .DS_Store
+*.npz
+*.parquet
+.pytest_cache/

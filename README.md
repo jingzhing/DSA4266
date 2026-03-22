@@ -1,271 +1,127 @@
-# DSA4266 — AI Image Detection
+# DSA4266 - Unified AI-Generated Image Detection Pipeline
 
-Deep learning project for detecting AI-generated (fake) images using modern vision architectures.
+This repository is now organized around one canonical pipeline:
 
-This repository trains and evaluates neural network models to classify images as:
+`setup -> prepare -> train -> eval -> infer`
 
-- Real (0)
-- Fake (1)
+Both `swin` (PyTorch) and `efficientnet` (TensorFlow) run through the same data and artifact contracts.
 
-Dataset: DeepDetect-2025  
-Task: Binary image classification (AI-generated vs real)
+## 1. Repository Structure
 
----
+- `pipeline/` - source of truth for CLI, stages, preflight checks, model runners, metrics.
+- `configs/pipeline.yaml` - single config for paths, data, video enrichment, augmentation, training/eval/infer.
+- `scripts/` - compatibility wrappers/utilities that call into `pipeline`.
+- `requirements/` - split dependency files (`base`, `swin`, `efficientnet`, `dev`).
+- `tests/` - unit and smoke tests for config, prepare, preflight, and model stage flow.
+- `old/` - legacy/original/unused files moved out of active pipeline (old notebooks, legacy model scripts, old result images).
 
-# Project Overview
+## 2. How To Run This Repository
 
-AI-generated images from models like StyleGAN3, DALL·E 3, Midjourney, and Stable Diffusion 3 are becoming increasingly photorealistic.
+### Install dependencies
 
-This project builds deep learning classifiers capable of distinguishing:
+Swin path:
 
-- Real photographs  
-- AI-generated synthetic images  
+```bash
+pip install -r requirements/base.txt -r requirements/swin.txt
+```
 
-We focus on:
+EfficientNet path:
 
-- Strong generalization across diverse domains
-- Proper validation-based threshold selection
-- Balanced evaluation metrics (not just raw accuracy)
+```bash
+pip install -r requirements/base.txt -r requirements/efficientnet.txt
+```
 
-# Setup Guide (For New Users)
+Developer checks:
 
-## 1. Clone Repository
+```bash
+pip install -r requirements/dev.txt
+```
 
-git clone <repo-url>  
-cd DSA4266
+Install everything:
 
----
+```bash
+pip install -r requirements.txt
+```
 
-## 2. Create Virtual Environment
+### Run by stages (recommended)
 
-Windows:
+```bash
+python -m pipeline.cli setup --config configs/pipeline.yaml
+python -m pipeline.cli prepare --config configs/pipeline.yaml
+python -m pipeline.cli train --config configs/pipeline.yaml --model swin
+python -m pipeline.cli eval --config configs/pipeline.yaml --model swin
+python -m pipeline.cli infer --config configs/pipeline.yaml --model swin --input data/prepared/deepdetect-2025/test
+```
 
-python -m venv .venv  
-.\.venv\Scripts\activate  
+Swap `--model efficientnet` for EfficientNet.
 
-Mac / Linux:
+### Run everything in one command
 
-python3 -m venv .venv  
-source .venv/bin/activate  
+```bash
+python -m pipeline.cli run-all --config configs/pipeline.yaml --model swin
+python -m pipeline.cli run-all --config configs/pipeline.yaml --model efficientnet
+```
 
----
+Optional video enrichment:
 
-## 3. Install Dependencies
+```bash
+python -m pipeline.cli prepare --config configs/pipeline.yaml --with-video --video-url "<youtube_url>"
+```
 
-pip install --upgrade pip  
-pip install -r requirements.txt  
+### Expected data layout
 
----
+- Raw immutable dataset:
+  - `data/raw/deepdetect-2025/ddata/{train,test}/{real,fake}`
+- Prepared training dataset:
+  - `data/prepared/deepdetect-2025/{train,val,test}/{real,fake}`
+- Prepare manifest:
+  - `data/prepared/deepdetect-2025/manifest.json`
 
-## 4. Download & Setup Dataset
+### Expected run artifacts
 
-Run:
+Each run creates:
 
-python scripts/data_shortcut.py  
+`outputs/runs/<timestamp>_<model>_<tag>/`
 
-This script will:
+with:
 
-- Create required folders:
-  - data/
-  - outputs/
-  - models/swin/v1/checkpoints/
-- Download DeepDetect-2025 from KaggleHub
-- Copy dataset into:
+- `config_resolved.yaml`
+- `preflight_report.json`
+- `data_manifest_snapshot.json`
+- `model_checkpoint.*`
+- `metrics.json`
+- `metrics.csv`
+- `predictions.csv`
+- `confusion_matrix.png`
 
-data/deepdetect-2025/ddata/
+## 3. How Further Work Should Be Done
 
+Use this workflow to extend the repository safely:
 
+1. Add/modify configuration in `configs/pipeline.yaml` first.
+2. Implement stage logic in `pipeline/stages.py` (not notebooks).
+3. Implement or update model behavior in `pipeline/models.py`.
+4. Add dependency changes under `requirements/` split files.
+5. Add tests in `tests/` for new behavior.
+6. Keep notebooks as optional references only; pipeline code is canonical.
+7. Keep legacy assets in `old/` and do not reintroduce them into active paths.
 
-# Models Implemented
+For adding a new model family:
 
-## 1. Swin Transformer (Primary Model)
+1. Add model section in YAML under `models.<new_model>`.
+2. Extend `pipeline/models.py` with `train/evaluate/infer` handlers.
+3. Extend CLI model choices in `pipeline/cli.py`.
+4. Add preflight dependency checks in `pipeline/preflight.py`.
+5. Add at least one smoke test.
 
-Architecture:
-- swin_tiny_patch4_window7_224
-- Pretrained on ImageNet
-- Fine-tuned for binary classification
-- Single-logit output using BCEWithLogitsLoss
+## 4. Proposal Gap Analysis
 
-Why Swin?
+A full stage-by-stage evaluation against your proposal is documented in:
 
-Swin Transformer:
-- Captures local texture artifacts
-- Models global contextual inconsistencies
-- Uses hierarchical window-based attention
-- Strong for subtle AI artifact detection
+[`docs/proposal_stage_gap_analysis.md`](c:/Users/aria/OneDrive/Desktop/DSA4266/DSA4266/docs/proposal_stage_gap_analysis.md)
 
----
+High-level status:
 
-### Training Pipeline
-
-1. Load dataset from data/train  
-2. Split into:
-   - 90% training
-   - 10% validation  
-3. Train using:
-   - BCEWithLogitsLoss  
-   - AdamW optimizer  
-4. Select best threshold using validation balanced accuracy  
-5. Save best checkpoint  
-
----
-
-### Train Swin
-
-python -m models.swin.v1.train  
-
----
-
-### Test Swin
-
-python -m models.swin.v1.test  
-
-Outputs include:
-
-- Accuracy  
-- Balanced Accuracy  
-- ROC-AUC  
-- Confusion Matrix  
-- Precision / Recall / F1-score  
-
----
-
-# Example Performance (Swin v1)
-
-Example results:
-
-- Accuracy: ~0.87  
-- Balanced Accuracy: ~0.86  
-- ROC-AUC: ~0.97  
-
-Example confusion matrix:
-
-[[11319    58]  
- [ 2775  7624]]
-
-Interpretation:
-
-- Very low false positives (real misclassified as fake)  
-- Good fake detection with room for threshold tuning  
-
----
-
-## 2. EfficientNet Model (TO UPDATE)
-
-⚠ EfficientNet implementation is pending integration.
-
-Planned configuration:
-
-- Architecture: efficientnet_b0  
-- Pretrained ImageNet backbone  
-- Replace final classifier with single-logit output  
-- Same train/validation/test pipeline as Swin  
-
-Expected strengths:
-
-- Efficient CNN baseline  
-- Strong texture modeling  
-- Lightweight and fast  
-
-TODO:
-
-- Add EfficientNet model implementation  
-- Add training script  
-- Benchmark against Swin  
-
----
-
-# Evaluation Metrics
-
-We report:
-
-- Accuracy  
-- Balanced Accuracy  
-- ROC-AUC  
-- Confusion Matrix  
-- Precision  
-- Recall  
-- F1-score  
-
-Balanced Accuracy is emphasized because:
-
-- Prevents majority-class collapse  
-- Measures performance on both real and fake classes equally  
-
----
-
-# Experimental Design Decisions
-
-- Single-logit output instead of 2-class softmax  
-- Validation-based threshold tuning  
-- No aggressive class weighting (dataset near-balanced)  
-- Pretrained ImageNet initialization  
-
----
-
-# What Is NOT Committed
-
-To keep the repository clean, we do NOT commit:
-
-- .venv/  
-- data/  
-- outputs/  
-- checkpoints/  
-
-To reproduce results:
-
-1. Clone repo  
-2. Create venv  
-3. Install requirements  
-4. Run dataset setup script  
-5. Train model  
-
----
-
-# Dataset Description
-
-DeepDetect-2025 includes:
-
-- 100,000+ images  
-- Real: ~60,000  
-- Fake: ~55,000  
-- Multiple generators:
-  - StyleGAN3  
-  - DALL·E 3  
-  - Midjourney  
-  - Stable Diffusion 3  
-- Diverse domains:
-  - Portraits  
-  - Nature  
-  - Urban environments  
-  - Artworks  
-  - Synthetic objects  
-
-This ensures strong generalization testing.
-
----
-
-# Future Improvements
-
-- Add EfficientNet baseline  
-- Cross-generator evaluation  
-- Per-category analysis  
-- Domain generalization experiments  
-- Model ensembling (Swin + EfficientNet)  
-- Robustness testing against adversarial edits  
-
----
-
-# Contributors
-
-- Jing Zhi Ng
-- Sze Yui xxx
-- Alexendra
-- Dillon?
-- Joshua
-
----
-
-Course: DSA4266  
-Project: AI Image Detection  
-Objective: Build robust models to detect AI-generated visual content.
+- Implemented: unified data collection/setup, preprocessing pipeline, dual-model training/evaluation/inference, artifact standardization.
+- Partially implemented: transfer-learning variants (basic freeze/full-finetune controls exist but not full experiment matrix automation).
+- Missing: first-class frequency-domain CNN pipeline (FFT/DCT as canonical stage), PEFT for transformer, robustness stress testing (compression/adversarial), cross-dataset generalization experiments and reporting.
