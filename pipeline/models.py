@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -23,6 +24,35 @@ def _load_image_paths_for_inference(input_dir: Path) -> List[Path]:
     if not image_paths:
         raise RuntimeError(f"No images found in input directory: {input_dir}")
     return image_paths
+
+
+def _cfg_get(cfg: Dict[str, Any], keys: Sequence[str], default: Any) -> Any:
+    node: Any = cfg
+    for key in keys:
+        if not isinstance(node, dict) or key not in node:
+            return default
+        node = node[key]
+    return node
+
+
+def _resolve_flag(value: Any, auto_value: bool) -> bool:
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return auto_value
+    return bool(value)
+
+
+def _make_grad_scaler(torch_module: Any, enabled: bool):
+    amp_module = getattr(torch_module, "amp", None)
+    if amp_module is not None and hasattr(amp_module, "GradScaler"):
+        return amp_module.GradScaler("cuda", enabled=enabled)
+    return torch_module.cuda.amp.GradScaler(enabled=enabled)
+
+
+def _autocast_context(torch_module: Any, enabled: bool):
+    amp_module = getattr(torch_module, "amp", None)
+    if amp_module is not None and hasattr(amp_module, "autocast"):
+        return amp_module.autocast(device_type="cuda", enabled=enabled)
+    return torch_module.cuda.amp.autocast(enabled=enabled)
 
 
 def train_model(model_name: str, cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict[str, Any]:
@@ -70,17 +100,34 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
     val_dir = prepared_root / "val"
     class_names = cfg["data"]["class_names"]
     fake_idx = class_names.index("fake")
+    swin_opt = _cfg_get(cfg, ["training", "optimization", "swin"], {})
+    dataloader_opt = _cfg_get(cfg, ["training", "optimization", "dataloader"], {})
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    num_threads = int(swin_opt.get("num_threads", 0))
+    if num_threads > 0:
+        torch.set_num_threads(num_threads)
 
     mean = (0.485, 0.456, 0.406)
     std = (0.229, 0.224, 0.225)
-    train_tf = transforms.Compose(
-        [
-            transforms.RandomResizedCrop(model_cfg["img_size"], scale=(0.8, 1.0)),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ]
-    )
+    # Runtime augmentation is optional; disk-based augmentation is canonical by default.
+    if bool(cfg.get("training", {}).get("runtime_augmentation", False)):
+        train_tf = transforms.Compose(
+            [
+                transforms.RandomResizedCrop(model_cfg["img_size"], scale=(0.8, 1.0)),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
+    else:
+        train_tf = transforms.Compose(
+            [
+                transforms.Resize((model_cfg["img_size"], model_cfg["img_size"])),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
     eval_tf = transforms.Compose(
         [
             transforms.Resize((model_cfg["img_size"], model_cfg["img_size"])),
@@ -91,46 +138,156 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
 
     train_ds = ImageFolder(str(train_dir), transform=train_tf)
     val_ds = ImageFolder(str(val_dir), transform=eval_tf)
+
+    num_workers = int(model_cfg["num_workers"])
+    pin_memory = _resolve_flag(dataloader_opt.get("pin_memory", "auto"), auto_value=(device == "cuda"))
+    persistent_workers = _resolve_flag(
+        dataloader_opt.get("persistent_workers", "auto"),
+        auto_value=(num_workers > 0),
+    )
+    prefetch_factor = max(2, int(dataloader_opt.get("prefetch_factor", 2)))
+    loader_kwargs: Dict[str, Any] = {}
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = persistent_workers
+        loader_kwargs["prefetch_factor"] = prefetch_factor
+
     train_loader = DataLoader(
         train_ds,
         batch_size=model_cfg["batch_size"],
         shuffle=True,
-        num_workers=model_cfg["num_workers"],
-        pin_memory=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        **loader_kwargs,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=model_cfg["batch_size"],
         shuffle=False,
-        num_workers=model_cfg["num_workers"],
-        pin_memory=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        **loader_kwargs,
     )
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     model = timm.create_model(model_cfg["model_name"], pretrained=True, num_classes=1).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=float(model_cfg["lr"]))
+    base_lr = float(model_cfg["lr"])
+    weight_decay = float(swin_opt.get("weight_decay", 0.01))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
     loss_fn = torch.nn.BCEWithLogitsLoss()
+    use_amp = bool(swin_opt.get("amp", False)) and device == "cuda"
+    scaler = _make_grad_scaler(torch, enabled=use_amp)
+    gradient_accumulation_steps = max(1, int(swin_opt.get("gradient_accumulation_steps", 1)))
+    max_grad_norm = float(swin_opt.get("max_grad_norm", 0.0))
+    warmup_epochs = max(0, int(swin_opt.get("warmup_epochs", 0)))
+    min_lr = float(swin_opt.get("min_lr", 1e-6))
+    scheduler_name = str(swin_opt.get("scheduler", "none")).strip().lower()
+    scheduler = None
+    total_epochs = int(model_cfg["epochs"])
+    if scheduler_name == "cosine":
+        t_max = max(1, total_epochs - warmup_epochs)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max, eta_min=min_lr)
+    elif scheduler_name not in {"none", "off", ""}:
+        raise ValueError(f"Unsupported SWIN scheduler: {scheduler_name}")
+
+    early_stopping_patience = max(0, int(swin_opt.get("early_stopping_patience", 0)))
+    early_stopping_min_delta = float(swin_opt.get("early_stopping_min_delta", 0.0))
+    epochs_without_improvement = 0
+    batch_log_cfg = _cfg_get(cfg, ["training", "debug", "batch_logging"], {})
+    batch_log_enabled = bool(batch_log_cfg.get("enabled", False))
+    batch_log_every_n_steps = max(1, int(batch_log_cfg.get("every_n_steps", 1)))
+    batch_log_interval_seconds = max(0.0, float(batch_log_cfg.get("interval_seconds", 1.0)))
 
     best_val_score = -1.0
     best_threshold = float(cfg["training"]["default_threshold"])
     best_auc = float("nan")
     best_epoch = -1
     checkpoint_path = run_dir / "model_checkpoint.pt"
+    history: List[Dict[str, Any]] = []
+    print(
+        (
+            f"[SWIN][train] run_dir={run_dir} device={device} "
+            f"train_samples={len(train_ds)} val_samples={len(val_ds)} "
+            f"batch_size={model_cfg['batch_size']} steps_per_epoch={len(train_loader)} "
+            f"num_workers={num_workers} num_threads={num_threads} "
+            f"scheduler={scheduler_name} warmup_epochs={warmup_epochs} "
+            f"grad_accum={gradient_accumulation_steps} max_grad_norm={max_grad_norm}"
+        ),
+        flush=True,
+    )
 
-    for epoch in range(int(model_cfg["epochs"])):
+    for epoch in range(total_epochs):
+        epoch_start = time.perf_counter()
+        last_batch_log_time = epoch_start - batch_log_interval_seconds
+        if warmup_epochs > 0 and epoch < warmup_epochs:
+            warmup_lr = base_lr * float(epoch + 1) / float(warmup_epochs)
+            for group in optimizer.param_groups:
+                group["lr"] = warmup_lr
+
         model.train()
         losses: List[float] = []
-        for x, y in train_loader:
+        running_loss = 0.0
+        optimizer_steps = 0
+        epoch_total_steps = len(train_loader)
+        epoch_samples = len(train_ds)
+        optimizer.zero_grad(set_to_none=True)
+        for step_idx, (x, y) in enumerate(train_loader, start=1):
             x = x.to(device, non_blocking=True)
             y_bin = (y.numpy() == fake_idx).astype(np.float32)
             y_bin_t = torch.from_numpy(y_bin).to(device, non_blocking=True)
 
-            optimizer.zero_grad(set_to_none=True)
-            logits = model(x).squeeze(1)
-            loss = loss_fn(logits, y_bin_t)
-            loss.backward()
-            optimizer.step()
-            losses.append(float(loss.item()))
+            with _autocast_context(torch, enabled=use_amp):
+                logits = model(x).squeeze(1)
+                raw_loss = loss_fn(logits, y_bin_t)
+                loss = raw_loss / gradient_accumulation_steps
+
+            if use_amp:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
+
+            should_step = (step_idx % gradient_accumulation_steps == 0) or (step_idx == len(train_loader))
+            if should_step:
+                if max_grad_norm > 0:
+                    if use_amp:
+                        scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+
+                if use_amp:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                optimizer_steps += 1
+            losses.append(float(raw_loss.item()))
+            running_loss += float(raw_loss.item())
+
+            if batch_log_enabled:
+                now = time.perf_counter()
+                time_gate_open = (now - last_batch_log_time) >= batch_log_interval_seconds
+                step_gate_open = step_idx % batch_log_every_n_steps == 0
+                is_boundary_step = step_idx == 1 or step_idx == epoch_total_steps
+                if is_boundary_step or (time_gate_open and step_gate_open):
+                    elapsed_sec = max(0.0, now - epoch_start)
+                    sec_per_step = elapsed_sec / step_idx if step_idx > 0 else float("nan")
+                    steps_remaining = max(0, epoch_total_steps - step_idx)
+                    eta_sec = sec_per_step * steps_remaining if step_idx > 0 else float("nan")
+                    avg_loss = running_loss / step_idx if step_idx > 0 else float("nan")
+                    samples_done = min(epoch_samples, step_idx * int(model_cfg["batch_size"]))
+                    print(
+                        (
+                            f"[SWIN][batch] epoch={epoch + 1}/{total_epochs} "
+                            f"step={step_idx}/{epoch_total_steps} "
+                            f"samples={samples_done}/{epoch_samples} "
+                            f"loss={float(raw_loss.item()):.6f} "
+                            f"avg_loss={avg_loss:.6f} "
+                            f"lr={float(optimizer.param_groups[0]['lr']):.8f} "
+                            f"opt_steps={optimizer_steps} "
+                            f"elapsed_sec={elapsed_sec:.2f} "
+                            f"eta_sec={eta_sec:.2f}"
+                        ),
+                        flush=True,
+                    )
+                    last_batch_log_time = now
 
         val_logits: List[np.ndarray] = []
         val_y_raw: List[np.ndarray] = []
@@ -147,12 +304,28 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
         probs = sigmoid(np.concatenate(val_logits))
         threshold, score = find_best_threshold(y_bin, probs)
         metrics = compute_binary_metrics(y_bin, probs, threshold)
+        train_loss_mean = float(np.mean(losses) if losses else float("nan"))
+        current_lr = float(optimizer.param_groups[0]["lr"])
+        history.append(
+            {
+                "epoch": epoch + 1,
+                "train_loss": train_loss_mean,
+                "val_balanced_accuracy": float(metrics["balanced_accuracy"]),
+                "val_roc_auc": float(metrics["roc_auc"]),
+                "threshold": float(threshold),
+                "lr": current_lr,
+            }
+        )
+        epoch_time_sec = float(time.perf_counter() - epoch_start)
 
-        if score > best_val_score:
+        improved = False
+        if score > (best_val_score + early_stopping_min_delta):
             best_val_score = score
             best_threshold = threshold
             best_auc = metrics["roc_auc"]
             best_epoch = epoch + 1
+            epochs_without_improvement = 0
+            improved = True
             torch.save(
                 {
                     "model_state_dict": model.state_dict(),
@@ -165,6 +338,36 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
                 },
                 checkpoint_path,
             )
+        else:
+            epochs_without_improvement += 1
+
+        if scheduler is not None and epoch + 1 > warmup_epochs:
+            scheduler.step()
+
+        print(
+            (
+                f"[SWIN][epoch {epoch + 1}/{total_epochs}] "
+                f"loss={train_loss_mean:.6f} "
+                f"val_bal_acc={float(metrics['balanced_accuracy']):.6f} "
+                f"val_auc={float(metrics['roc_auc']):.6f} "
+                f"threshold={float(threshold):.4f} "
+                f"lr={current_lr:.8f} "
+                f"improved={improved} "
+                f"time_sec={epoch_time_sec:.2f}"
+            ),
+            flush=True,
+        )
+
+        if early_stopping_patience > 0 and epochs_without_improvement >= early_stopping_patience:
+            print(
+                (
+                    f"[SWIN][early_stop] epoch={epoch + 1} "
+                    f"patience={early_stopping_patience} "
+                    f"best_epoch={best_epoch} best_val_bal_acc={best_val_score:.6f}"
+                ),
+                flush=True,
+            )
+            break
 
     return {
         "checkpoint_path": str(checkpoint_path),
@@ -172,6 +375,16 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
         "best_val_balanced_accuracy": float(best_val_score),
         "best_val_auc": float(best_auc),
         "best_epoch": int(best_epoch),
+        "epochs_ran": len(history),
+        "optimizer": {
+            "scheduler": scheduler_name,
+            "warmup_epochs": warmup_epochs,
+            "gradient_accumulation_steps": gradient_accumulation_steps,
+            "max_grad_norm": max_grad_norm,
+            "weight_decay": weight_decay,
+            "amp": use_amp,
+        },
+        "history": history,
     }
 
 
@@ -201,15 +414,29 @@ def _evaluate_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> D
         ]
     )
     test_ds = ImageFolder(str(prepared_root / "test"), transform=test_tf)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dataloader_opt = _cfg_get(cfg, ["training", "optimization", "dataloader"], {})
+    num_workers = int(model_cfg["num_workers"])
+    pin_memory = _resolve_flag(dataloader_opt.get("pin_memory", "auto"), auto_value=(device == "cuda"))
+    persistent_workers = _resolve_flag(
+        dataloader_opt.get("persistent_workers", "auto"),
+        auto_value=(num_workers > 0),
+    )
+    prefetch_factor = max(2, int(dataloader_opt.get("prefetch_factor", 2)))
+    loader_kwargs: Dict[str, Any] = {}
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = persistent_workers
+        loader_kwargs["prefetch_factor"] = prefetch_factor
+
     test_loader = DataLoader(
         test_ds,
         batch_size=model_cfg["batch_size"],
         shuffle=False,
-        num_workers=model_cfg["num_workers"],
-        pin_memory=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        **loader_kwargs,
     )
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     model = timm.create_model(model_cfg["model_name"], pretrained=False, num_classes=1).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
@@ -285,9 +512,17 @@ def _infer_swin(cfg: Dict[str, Any], run_dir: Path, input_dir: Path) -> List[Dic
     )
     image_paths = _load_image_paths_for_inference(input_dir)
     ds = _InferenceDataset(image_paths, transform)
-    loader = DataLoader(ds, batch_size=model_cfg["batch_size"], shuffle=False, num_workers=0)
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    dataloader_opt = _cfg_get(cfg, ["training", "optimization", "dataloader"], {})
+    pin_memory = _resolve_flag(dataloader_opt.get("pin_memory", "auto"), auto_value=(device == "cuda"))
+    loader = DataLoader(
+        ds,
+        batch_size=model_cfg["batch_size"],
+        shuffle=False,
+        num_workers=0,
+        pin_memory=pin_memory,
+    )
+
     model = timm.create_model(model_cfg["model_name"], pretrained=False, num_classes=1).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
@@ -373,6 +608,8 @@ def _tf_dataset_from_directory(
 
 
 def _train_efficientnet(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict[str, Any]:
+    import tensorflow as tf
+
     model_cfg = cfg["models"]["efficientnet"]
     fake_idx = cfg["data"]["class_names"].index("fake")
     if fake_idx != 1:
@@ -381,11 +618,41 @@ def _train_efficientnet(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path)
     train_ds = _tf_dataset_from_directory(prepared_root / "train", cfg, training=True)
     val_ds = _tf_dataset_from_directory(prepared_root / "val", cfg, training=False)
     model = _build_efficientnet_model(cfg)
+    eff_opt = _cfg_get(cfg, ["training", "optimization", "efficientnet"], {})
+
+    callbacks: List[Any] = []
+    early_stopping_patience = max(0, int(eff_opt.get("early_stopping_patience", 0)))
+    early_stopping_min_delta = float(eff_opt.get("early_stopping_min_delta", 0.0))
+    if early_stopping_patience > 0:
+        callbacks.append(
+            tf.keras.callbacks.EarlyStopping(
+                monitor="val_auc",
+                mode="max",
+                patience=early_stopping_patience,
+                min_delta=early_stopping_min_delta,
+                restore_best_weights=True,
+            )
+        )
+
+    reduce_lr_patience = max(0, int(eff_opt.get("reduce_lr_patience", 0)))
+    if reduce_lr_patience > 0:
+        callbacks.append(
+            tf.keras.callbacks.ReduceLROnPlateau(
+                monitor="val_auc",
+                mode="max",
+                factor=float(eff_opt.get("reduce_lr_factor", 0.5)),
+                patience=reduce_lr_patience,
+                min_lr=float(eff_opt.get("min_lr", 1e-6)),
+                verbose=1,
+            )
+        )
+
     history = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=int(model_cfg["epochs"]),
         verbose=1,
+        callbacks=callbacks or None,
     )
 
     logits = model.predict(val_ds, verbose=0).reshape(-1)
@@ -404,6 +671,12 @@ def _train_efficientnet(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path)
                 "best_val_balanced_accuracy": float(score),
                 "best_val_auc": float(metrics["roc_auc"]),
                 "history_keys": list(history.history.keys()),
+                "epochs_ran": len(history.history.get("loss", [])),
+                "callbacks": {
+                    "early_stopping_patience": early_stopping_patience,
+                    "early_stopping_min_delta": early_stopping_min_delta,
+                    "reduce_lr_patience": reduce_lr_patience,
+                },
             },
             indent=2,
         ),

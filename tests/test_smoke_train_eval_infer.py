@@ -18,6 +18,9 @@ def _cfg_for_training(tmp_path: Path) -> dict:
     cfg["paths"]["outputs_root"] = str((tmp_path / "outputs" / "runs").as_posix())
     cfg["data"] = dict(cfg["data"])
     cfg["data"]["skip_download"] = True
+    cfg["video"] = dict(cfg["video"])
+    cfg["video"]["enabled"] = False
+    cfg["video"]["urls"] = []
     cfg["prepare"] = dict(cfg["prepare"])
     cfg["prepare"]["overwrite"] = True
     cfg["prepare"]["augmentation"] = dict(cfg["prepare"]["augmentation"])

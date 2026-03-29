@@ -6,6 +6,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 
+from pipeline.audit import build_manifest_v1, run_quality_audit_v1
 from pipeline.augmentation import AugmentationConfig, augment_file_to_path
 from pipeline.common import (
     copy_if_exists,
@@ -19,8 +20,6 @@ from pipeline.common import (
     write_json,
 )
 from pipeline.config import dump_yaml, resolve_path
-from pipeline.metrics import compute_confusion, metrics_to_rows, save_confusion_matrix_png
-from pipeline.models import evaluate_model, infer_model, train_model
 from pipeline.preflight import (
     check_checkpoint_collision,
     check_class_folders,
@@ -32,12 +31,40 @@ from pipeline.preflight import (
 from pipeline.video import download_and_extract
 
 
+def _dataset_name_candidates(dataset_version: str) -> List[str]:
+    candidates = [dataset_version]
+    if "-" in dataset_version:
+        candidates.append(dataset_version.replace("-", "_"))
+    if "_" in dataset_version:
+        candidates.append(dataset_version.replace("_", "-"))
+    out: List[str] = []
+    for name in candidates:
+        if name not in out:
+            out.append(name)
+    return out
+
+
 def _raw_dataset_dir(cfg: Dict[str, Any]) -> Path:
-    return resolve_path(cfg, cfg["paths"]["raw_root"]) / cfg["data"]["dataset_version"]
+    raw_root = resolve_path(cfg, cfg["paths"]["raw_root"])
+    candidates = _dataset_name_candidates(str(cfg["data"]["dataset_version"]))
+    preferred = raw_root / candidates[0]
+    if preferred.exists():
+        return preferred
+    for name in candidates[1:]:
+        alt = raw_root / name
+        if alt.exists():
+            return alt
+    return preferred
 
 
 def _prepared_dataset_dir(cfg: Dict[str, Any]) -> Path:
     return resolve_path(cfg, cfg["paths"]["prepared_root"]) / cfg["data"]["dataset_version"]
+
+
+def _processed_dataset_dir(cfg: Dict[str, Any], raw_dataset_dir: Optional[Path] = None) -> Path:
+    data_root = resolve_path(cfg, cfg["paths"]["data_root"])
+    dataset_key = raw_dataset_dir.name if raw_dataset_dir is not None else str(cfg["data"]["dataset_version"])
+    return ensure_dir(data_root / "processed" / dataset_key)
 
 
 def _expected_raw_train_dir(cfg: Dict[str, Any]) -> Path:
@@ -46,6 +73,73 @@ def _expected_raw_train_dir(cfg: Dict[str, Any]) -> Path:
 
 def _expected_raw_test_dir(cfg: Dict[str, Any]) -> Path:
     return _raw_dataset_dir(cfg) / cfg["data"]["raw_test_subdir"]
+
+
+def _resolve_input_dir(cfg: Dict[str, Any], raw_value: str | Path) -> Path:
+    path = Path(raw_value)
+    if path.is_absolute():
+        return path
+    return resolve_path(cfg, str(raw_value))
+
+
+def _collect_additional_class_images(
+    cfg: Dict[str, Any],
+    class_name: str,
+) -> tuple[list[Path], list[Dict[str, Any]]]:
+    images: List[Path] = []
+    sources: List[Dict[str, Any]] = []
+
+    for root_raw in cfg["data"].get("additional_train_roots", []):
+        root = _resolve_input_dir(cfg, root_raw)
+        if not root.exists():
+            raise RuntimeError(f"Configured additional_train_root does not exist: {root}")
+        candidate_dirs = [
+            root / class_name,
+            root / "train" / class_name,
+            root / "ddata" / "train" / class_name,
+        ]
+        found_in_root = 0
+        for candidate in candidate_dirs:
+            if candidate.exists():
+                found = list_images(candidate)
+                if found:
+                    images.extend(found)
+                    found_in_root += len(found)
+                    sources.append(
+                        {
+                            "source_type": "additional_train_root",
+                            "path": str(candidate),
+                            "class_name": class_name,
+                            "count": len(found),
+                        }
+                    )
+        if found_in_root == 0:
+            raise RuntimeError(
+                f"additional_train_root has no usable '{class_name}' images in supported patterns: {root}"
+            )
+
+    class_dirs = cfg["data"].get("additional_class_dirs", {}).get(class_name, [])
+    for class_raw in class_dirs:
+        class_dir = _resolve_input_dir(cfg, class_raw)
+        if not class_dir.exists():
+            raise RuntimeError(f"Configured additional_class_dir does not exist: {class_dir}")
+        found = list_images(class_dir)
+        if not found:
+            raise RuntimeError(f"Configured additional_class_dir has no images: {class_dir}")
+        images.extend(found)
+        sources.append(
+            {
+                "source_type": "additional_class_dir",
+                "path": str(class_dir),
+                "class_name": class_name,
+                "count": len(found),
+            }
+        )
+
+    dedup_map: Dict[str, Path] = {}
+    for path in images:
+        dedup_map[str(path.resolve())] = path
+    return sorted(dedup_map.values()), sources
 
 
 def _update_preflight_report(run_dir: Path, stage: str, report: Dict[str, Any]) -> None:
@@ -102,6 +196,60 @@ def run_setup(cfg: Dict[str, Any], force: bool = False) -> Dict[str, Any]:
     }
 
 
+def run_audit(cfg: Dict[str, Any], force: bool = False) -> Dict[str, Any]:
+    raw_dataset_dir = _raw_dataset_dir(cfg)
+    train_dir = _expected_raw_train_dir(cfg)
+    test_dir = _expected_raw_test_dir(cfg)
+    class_names = cfg["data"]["class_names"]
+
+    checks: List[Dict[str, Any]] = [
+        check_class_folders(train_dir, class_names),
+        check_class_folders(test_dir, class_names),
+    ]
+    report = summarize_preflight(checks)
+    if not report["ok"]:
+        raise RuntimeError("Audit preflight failed. Validate raw dataset/class names first.")
+
+    processed_dir = _processed_dataset_dir(cfg, raw_dataset_dir=raw_dataset_dir)
+    manifest_path = processed_dir / "manifest_v1.json"
+    summary_path = processed_dir / "audit_summary_v1.json"
+    duplicates_path = processed_dir / "duplicates_v1.json"
+    assertions_path = processed_dir / "audit_assertions_v1.json"
+
+    if force:
+        for path in [manifest_path, summary_path, duplicates_path, assertions_path]:
+            if path.exists():
+                path.unlink()
+
+    manifest_result = build_manifest_v1(
+        raw_dataset_dir=raw_dataset_dir,
+        class_names=class_names,
+        raw_train_subdir=cfg["data"]["raw_train_subdir"],
+        raw_test_subdir=cfg["data"]["raw_test_subdir"],
+        dataset_id=cfg["data"]["dataset_id"],
+        out_manifest_path=manifest_path,
+    )
+
+    audit_result = run_quality_audit_v1(
+        manifest_path=manifest_path,
+        out_summary_path=summary_path,
+        out_duplicates_path=duplicates_path,
+        out_assertions_path=assertions_path,
+        decode_failed_rate_threshold=float(cfg["audit"]["decode_failed_rate_threshold"]),
+    )
+
+    if not audit_result["ok"]:
+        raise RuntimeError(
+            "Audit assertions failed. Review audit_assertions_v1.json before proceeding to prepare/train."
+        )
+
+    return {
+        "processed_dir": str(processed_dir),
+        "manifest_result": manifest_result,
+        "audit_result": audit_result,
+    }
+
+
 def _copy_images(paths: Iterable[Path], dst_dir: Path, prefix: str) -> List[Path]:
     dst_dir.mkdir(parents=True, exist_ok=True)
     copied: List[Path] = []
@@ -140,6 +288,23 @@ def run_prepare(
     overwrite = bool(cfg["prepare"]["overwrite"] or force)
     val_ratio = float(cfg["prepare"]["val_ratio"])
     seed = int(cfg["project"]["seed"])
+    configured_video_enabled = bool(cfg["video"].get("enabled", False))
+    effective_with_video = bool(with_video or configured_video_enabled)
+    resolved_video_urls = [str(url).strip() for url in (video_urls or []) if str(url).strip()]
+
+    video_raw_root = resolve_path(cfg, cfg["paths"]["raw_root"]) / cfg["video"]["output_subdir"]
+    download_dir = video_raw_root / "downloads"
+    extracted_dir = video_raw_root / "extracted"
+    existing_video_images = list_images(extracted_dir)
+
+    if effective_with_video and not resolved_video_urls:
+        resolved_video_urls = [str(url).strip() for url in cfg["video"].get("urls", []) if str(url).strip()]
+    if effective_with_video and not resolved_video_urls and not existing_video_images:
+        raise RuntimeError(
+            "Video enrichment is enabled, but no video URLs were provided and no extracted frames exist. "
+            "Pass --video-url on CLI, set video.urls in config, or provide existing frames under "
+            f"'{extracted_dir}'."
+        )
 
     checks = [
         check_split_ratio(val_ratio),
@@ -148,7 +313,7 @@ def run_prepare(
     ]
     if bool(cfg["prepare"]["augmentation"].get("enabled", False)):
         checks.append(check_dependencies("augmentation"))
-    if with_video and video_urls:
+    if effective_with_video and resolved_video_urls:
         checks.append(check_dependencies("video"))
     report = summarize_preflight(checks)
     if not report["ok"]:
@@ -164,39 +329,79 @@ def run_prepare(
             ensure_dir(prepared_root / split / class_name)
 
     video_stats: List[Dict[str, Any]] = []
-    video_urls = video_urls or []
-    if with_video and video_urls:
-        video_raw_root = ensure_dir(resolve_path(cfg, cfg["paths"]["raw_root"]) / cfg["video"]["output_subdir"])
-        download_dir = ensure_dir(video_raw_root / "downloads")
-        extracted_dir = ensure_dir(video_raw_root / "extracted")
-        for url in video_urls:
-            stats = download_and_extract(
-                url=url,
-                download_dir=download_dir,
-                output_dir=extracted_dir,
-                blur_threshold=float(cfg["video"]["blur_threshold"]),
-                min_frame_stride=int(cfg["video"]["min_frame_stride"]),
-                max_frame_stride=int(cfg["video"]["max_frame_stride"]),
-                seed=int(cfg["video"]["seed"]),
-                cleanup_video_file=bool(cfg["video"]["cleanup_video_file"]),
-            )
+    if effective_with_video and resolved_video_urls:
+        ensure_dir(video_raw_root)
+        ensure_dir(download_dir)
+        ensure_dir(extracted_dir)
+        for url in resolved_video_urls:
+            try:
+                stats = download_and_extract(
+                    url=url,
+                    download_dir=download_dir,
+                    output_dir=extracted_dir,
+                    blur_threshold=float(cfg["video"]["blur_threshold"]),
+                    min_frame_stride=int(cfg["video"]["min_frame_stride"]),
+                    max_frame_stride=int(cfg["video"]["max_frame_stride"]),
+                    seed=int(cfg["video"]["seed"]),
+                    cleanup_video_file=bool(cfg["video"]["cleanup_video_file"]),
+                )
+                stats["status"] = "downloaded_and_extracted"
+            except Exception as exc:  # pragma: no cover - depends on network/runtime.
+                fallback_frames = list_images(extracted_dir)
+                if not fallback_frames:
+                    raise RuntimeError(
+                        f"Video enrichment failed for URL '{url}', and no fallback extracted frames exist."
+                    ) from exc
+                stats = {
+                    "video_url": url,
+                    "status": "download_failed_reused_existing_frames",
+                    "error": str(exc),
+                    "saved_frames": 0,
+                    "write_failures": 0,
+                    "blur_threshold": float(cfg["video"]["blur_threshold"]),
+                    "min_frame_stride": int(cfg["video"]["min_frame_stride"]),
+                    "max_frame_stride": int(cfg["video"]["max_frame_stride"]),
+                    "seed": int(cfg["video"]["seed"]),
+                }
             video_stats.append(stats)
+
+    video_images = list_images(extracted_dir) if effective_with_video else []
+    if effective_with_video and not video_images:
+        raise RuntimeError(
+            "Video enrichment is enabled, but no extracted frames are available after processing. "
+            f"Expected images under '{extracted_dir}'."
+        )
 
     split_sources: Dict[str, Dict[str, List[Path]]] = {"train": {}, "val": {}, "test": {}}
     source_hashes: Dict[str, str] = {}
+    additional_data_sources: Dict[str, List[Dict[str, Any]]] = {name: [] for name in class_names}
+    additional_data_counts: Dict[str, int] = {name: 0 for name in class_names}
     for class_name in class_names:
         raw_train_images = list_images(raw_train_dir / class_name)
-        if with_video and class_name == "fake":
-            video_images = list_images(resolve_path(cfg, cfg["paths"]["raw_root"]) / cfg["video"]["output_subdir"] / "extracted")
-            raw_train_images.extend(video_images)
-            raw_train_images = sorted(raw_train_images)
-
         train_paths, val_paths = _split_paths(raw_train_images, val_ratio=val_ratio, seed=seed)
+
+        additional_images, additional_sources = _collect_additional_class_images(cfg, class_name)
+        if additional_images:
+            train_paths.extend(additional_images)
+            additional_data_counts[class_name] += len(additional_images)
+            additional_data_sources[class_name].extend(additional_sources)
+
+        if effective_with_video and class_name == "fake":
+            train_paths.extend(video_images)
+
+        dedup_train: Dict[str, Path] = {}
+        for path in train_paths:
+            dedup_train[str(path.resolve())] = path
+        train_paths = sorted(dedup_train.values())
+
         test_paths = list_images(raw_test_dir / class_name)
         split_sources["train"][class_name] = train_paths
         split_sources["val"][class_name] = val_paths
         split_sources["test"][class_name] = test_paths
-        source_hashes[class_name] = metadata_hash(raw_train_images + test_paths, base_root=_raw_dataset_dir(cfg))
+        source_hashes[class_name] = metadata_hash(
+            train_paths + val_paths + test_paths,
+            base_root=resolve_path(cfg, cfg["paths"]["raw_root"]),
+        )
 
         _copy_images(train_paths, prepared_root / "train" / class_name, prefix=f"{class_name}_train")
         _copy_images(val_paths, prepared_root / "val" / class_name, prefix=f"{class_name}_val")
@@ -222,6 +427,13 @@ def run_prepare(
             blur_kernel=int(aug_cfg["blur_kernel"]),
             blur_sigma_min=float(aug_cfg["blur_sigma_min"]),
             blur_sigma_max=float(aug_cfg["blur_sigma_max"]),
+            rotate_degrees=float(aug_cfg.get("rotate_degrees", 12.0)),
+            brightness_limit=float(aug_cfg.get("brightness_limit", 0.15)),
+            contrast_limit=float(aug_cfg.get("contrast_limit", 0.2)),
+            noise_sigma_min=float(aug_cfg.get("noise_sigma_min", 3.0)),
+            noise_sigma_max=float(aug_cfg.get("noise_sigma_max", 12.0)),
+            jpeg_quality_min=int(aug_cfg.get("jpeg_quality_min", 45)),
+            jpeg_quality_max=int(aug_cfg.get("jpeg_quality_max", 95)),
         )
         if current_files and to_generate > 0:
             for idx in range(to_generate):
@@ -244,14 +456,21 @@ def run_prepare(
         "source_hashes": source_hashes,
         "split_counts": split_counts,
         "video_enrichment": {
-            "enabled": with_video,
-            "urls": video_urls,
+            "enabled": effective_with_video,
+            "urls": resolved_video_urls,
+            "frame_count_available": len(video_images),
             "stats": video_stats,
         },
         "augmentation": {
             "enabled": bool(aug_cfg.get("enabled", False)),
             "target_class": aug_cfg.get("target_class"),
             "generated_count": aug_generated,
+            "probabilities": dict(aug_cfg.get("probabilities", {})),
+        },
+        "additional_data": {
+            "enabled": any(additional_data_counts.values()),
+            "counts": additional_data_counts,
+            "sources": additional_data_sources,
         },
     }
     manifest_path = prepared_root / "manifest.json"
@@ -313,6 +532,9 @@ def run_train(
     model_name: str,
     run_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
+    from pipeline.models import train_model
+    from pipeline.reporting import write_train_research_artifacts
+
     outputs_root = ensure_dir(resolve_path(cfg, cfg["paths"]["outputs_root"]))
     run_dir = run_dir or create_run_dir(outputs_root, model_name=model_name, tag=cfg["artifacts"]["tag"])
     prepared_root = _prepared_dataset_dir(cfg)
@@ -326,6 +548,12 @@ def run_train(
 
     train_summary = train_model(model_name=model_name, cfg=cfg, prepared_root=prepared_root, run_dir=run_dir)
     write_json(run_dir / "train_summary.json", train_summary)
+    write_train_research_artifacts(
+        run_dir=run_dir,
+        train_summary=train_summary,
+        cfg=cfg,
+        model_name=model_name,
+    )
     return {"run_dir": str(run_dir), "train_summary": train_summary}
 
 
@@ -334,6 +562,10 @@ def run_eval(
     model_name: str,
     run_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
+    from pipeline.metrics import compute_confusion, metrics_to_rows, save_confusion_matrix_png
+    from pipeline.models import evaluate_model
+    from pipeline.reporting import write_eval_research_artifacts
+
     outputs_root = ensure_dir(resolve_path(cfg, cfg["paths"]["outputs_root"]))
     resolved_run_dir = run_dir or latest_run_dir(outputs_root, model_name)
     if resolved_run_dir is None:
@@ -362,6 +594,13 @@ def run_eval(
     cm = compute_confusion(y_true, probs, threshold)
     if bool(cfg["evaluation"]["save_confusion_matrix"]):
         save_confusion_matrix_png(resolved_run_dir / "confusion_matrix.png", cm)
+    write_eval_research_artifacts(
+        run_dir=resolved_run_dir,
+        metrics=metrics,
+        predictions=predictions,
+        cfg=cfg,
+        model_name=model_name,
+    )
     write_json(
         resolved_run_dir / "eval_summary.json",
         {"metrics_path": str(resolved_run_dir / "metrics.json"), "prediction_count": len(predictions)},
@@ -375,6 +614,8 @@ def run_infer(
     input_dir: Path,
     run_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
+    from pipeline.models import infer_model
+
     outputs_root = ensure_dir(resolve_path(cfg, cfg["paths"]["outputs_root"]))
     resolved_run_dir = run_dir or latest_run_dir(outputs_root, model_name)
     if resolved_run_dir is None:
@@ -416,6 +657,7 @@ def run_all(
     video_urls: Optional[List[str]] = None,
     infer_input: Optional[Path] = None,
     skip_setup: bool = False,
+    skip_audit: bool = False,
     skip_prepare: bool = False,
     skip_train: bool = False,
     skip_eval: bool = False,
@@ -425,6 +667,8 @@ def run_all(
 
     if not skip_setup:
         result["setup"] = run_setup(cfg=cfg, force=False)
+    if not skip_audit:
+        result["audit"] = run_audit(cfg=cfg, force=False)
     if not skip_prepare:
         result["prepare"] = run_prepare(
             cfg=cfg,

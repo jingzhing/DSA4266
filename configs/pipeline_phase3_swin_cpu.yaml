@@ -10,13 +10,13 @@ paths:
 
 data:
   dataset_id: ayushmandatta1/deepdetect-2025
-  dataset_version: deepdetect-2025
+  dataset_version: deepdetect-2025-swin-phase3-cpu
   raw_train_subdir: ddata/train
   raw_test_subdir: ddata/test
   class_names:
     - real
     - fake
-  skip_download: false
+  skip_download: true
   additional_train_roots: []
   additional_class_dirs:
     real: []
@@ -69,10 +69,10 @@ models:
   swin:
     model_name: swin_tiny_patch4_window7_224
     img_size: 224
-    batch_size: 16
-    epochs: 12
+    batch_size: 8
+    epochs: 1
     lr: 0.0001
-    num_workers: 2
+    num_workers: 0
   efficientnet:
     variant: B0
     img_size: 224
@@ -96,9 +96,9 @@ training:
       max_grad_norm: 1.0
       weight_decay: 0.01
       scheduler: cosine
-      warmup_epochs: 1
+      warmup_epochs: 0
       min_lr: 1.0e-6
-      early_stopping_patience: 2
+      early_stopping_patience: 1
       early_stopping_min_delta: 0.0
       amp: false
       num_threads: 0
@@ -113,8 +113,8 @@ evaluation:
   save_confusion_matrix: true
 
 inference:
-  default_input: ""
+  default_input: data/prepared/deepdetect-2025-swin-phase3-cpu/test
 
 artifacts:
-  tag: default
+  tag: phase3_swin_cpu
   overwrite: false

@@ -46,3 +46,21 @@ This document maps the current repository to the proposal stages and identifies 
 2. Add `training.mode` options: `linear_probe`, `progressive_unfreeze`, `full_finetune`.
 3. Add `evaluation.robustness` config and a new `robust-eval` CLI stage.
 4. Add experiment aggregation report stage (`report`) to summarize metrics across model/mode combinations.
+
+## Optimization Queue Kickoff (2026-03-26 Update)
+
+This proposal-gap workstream has now started from the dual-model baseline step. The following optimization controls were implemented as immediate enablers for later gap-closure experiments:
+
+1. Hardware-aware dataloader optimization controls (`pin_memory`, `persistent_workers`, `prefetch_factor`).
+2. SWIN optimization controls:
+   - gradient accumulation
+   - gradient clipping
+   - weight decay tuning
+   - warmup + cosine LR scheduling
+   - early stopping
+   - optional AMP gate
+3. EfficientNet optimization controls:
+   - early stopping on `val_auc`
+   - reduce-on-plateau LR scheduling
+
+These changes do not close the proposal's major scientific gaps directly (frequency-domain model, PEFT, robustness/generalization stage), but they reduce runtime and stability risk for executing those planned experiments.

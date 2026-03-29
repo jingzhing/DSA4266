@@ -18,6 +18,10 @@ DEFAULT_PROBABILITIES = {
     "vflip": 0.1,
     "gaussian_blur": 0.25,
     "random_erase": 0.2,
+    "rotate": 0.2,
+    "brightness_contrast": 0.3,
+    "gaussian_noise": 0.15,
+    "jpeg_compression": 0.15,
 }
 
 
@@ -28,6 +32,13 @@ def build_default_config() -> AugmentationConfig:
         blur_kernel=5,
         blur_sigma_min=0.3,
         blur_sigma_max=1.5,
+        rotate_degrees=12.0,
+        brightness_limit=0.15,
+        contrast_limit=0.2,
+        noise_sigma_min=3.0,
+        noise_sigma_max=12.0,
+        jpeg_quality_min=45,
+        jpeg_quality_max=95,
     )
 
 

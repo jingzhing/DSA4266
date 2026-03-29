@@ -12,8 +12,8 @@ def download_video(url: str, download_dir: Path) -> Path:
 
     download_dir.mkdir(parents=True, exist_ok=True)
     ydl_opts = {
-        "format": "bestvideo+bestaudio/best",
-        "merge_output_format": "mp4",
+        # Prefer progressive MP4 to avoid ffmpeg merge dependency in local-first setups.
+        "format": "best[ext=mp4]/best",
         "outtmpl": str(download_dir / "yt_dl_%(id)s.%(ext)s"),
         "quiet": True,
         "noprogress": True,
@@ -104,4 +104,3 @@ def download_and_extract(
     if cleanup_video_file and video_path.exists():
         os.remove(video_path)
     return stats
-

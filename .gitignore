@@ -12,3 +12,5 @@ models/**/runs/
 *.npz
 *.parquet
 .pytest_cache/
+tests/
+docs/

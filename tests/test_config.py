@@ -11,6 +11,7 @@ def test_config_sections_present() -> None:
         "project",
         "paths",
         "data",
+        "audit",
         "video",
         "prepare",
         "models",

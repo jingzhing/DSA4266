@@ -15,6 +15,13 @@ class AugmentationConfig:
     blur_kernel: int
     blur_sigma_min: float
     blur_sigma_max: float
+    rotate_degrees: float
+    brightness_limit: float
+    contrast_limit: float
+    noise_sigma_min: float
+    noise_sigma_max: float
+    jpeg_quality_min: int
+    jpeg_quality_max: int
 
 
 def _apply_hflip(image: np.ndarray) -> np.ndarray:
@@ -67,6 +74,67 @@ def _apply_random_erase(
     return out
 
 
+def _apply_rotate(
+    image: np.ndarray,
+    rng: np.random.Generator,
+    rotate_degrees: float,
+) -> np.ndarray:
+    import cv2
+
+    h, w = image.shape[:2]
+    angle = float(rng.uniform(-rotate_degrees, rotate_degrees))
+    matrix = cv2.getRotationMatrix2D((w * 0.5, h * 0.5), angle, 1.0)
+    return cv2.warpAffine(
+        image,
+        matrix,
+        (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REFLECT_101,
+    )
+
+
+def _apply_brightness_contrast(
+    image: np.ndarray,
+    rng: np.random.Generator,
+    brightness_limit: float,
+    contrast_limit: float,
+) -> np.ndarray:
+    alpha = float(1.0 + rng.uniform(-contrast_limit, contrast_limit))
+    beta = float(rng.uniform(-brightness_limit, brightness_limit) * 255.0)
+    out = image.astype(np.float32) * alpha + beta
+    return np.clip(out, 0.0, 255.0).astype(np.uint8)
+
+
+def _apply_gaussian_noise(
+    image: np.ndarray,
+    rng: np.random.Generator,
+    noise_sigma_min: float,
+    noise_sigma_max: float,
+) -> np.ndarray:
+    sigma = float(rng.uniform(noise_sigma_min, noise_sigma_max))
+    noise = rng.normal(loc=0.0, scale=sigma, size=image.shape).astype(np.float32)
+    out = image.astype(np.float32) + noise
+    return np.clip(out, 0.0, 255.0).astype(np.uint8)
+
+
+def _apply_jpeg_compression(
+    image: np.ndarray,
+    rng: np.random.Generator,
+    jpeg_quality_min: int,
+    jpeg_quality_max: int,
+) -> np.ndarray:
+    import cv2
+
+    quality = int(rng.integers(jpeg_quality_min, jpeg_quality_max + 1))
+    ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        return image
+    decoded = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    if decoded is None:
+        return image
+    return decoded
+
+
 def apply_transforms(
     image: np.ndarray,
     cfg: AugmentationConfig,
@@ -87,6 +155,18 @@ def apply_transforms(
     if rng.random() < cfg.probabilities.get("random_erase", 0.0):
         out = _apply_random_erase(out, rng, cfg.erase_area_range)
         transforms_applied.append("random_erase")
+    if rng.random() < cfg.probabilities.get("rotate", 0.0):
+        out = _apply_rotate(out, rng, cfg.rotate_degrees)
+        transforms_applied.append("rotate")
+    if rng.random() < cfg.probabilities.get("brightness_contrast", 0.0):
+        out = _apply_brightness_contrast(out, rng, cfg.brightness_limit, cfg.contrast_limit)
+        transforms_applied.append("brightness_contrast")
+    if rng.random() < cfg.probabilities.get("gaussian_noise", 0.0):
+        out = _apply_gaussian_noise(out, rng, cfg.noise_sigma_min, cfg.noise_sigma_max)
+        transforms_applied.append("gaussian_noise")
+    if rng.random() < cfg.probabilities.get("jpeg_compression", 0.0):
+        out = _apply_jpeg_compression(out, rng, cfg.jpeg_quality_min, cfg.jpeg_quality_max)
+        transforms_applied.append("jpeg_compression")
 
     # Ensure at least one augmentation is applied for deterministic data expansion.
     if not transforms_applied:

@@ -1,3 +1,31 @@
--r requirements/base.txt
--r requirements/swin.txt
--r requirements/efficientnet.txt
+# Core scientific stack (pinned for sklearn/scipy compatibility)
+numpy<2
+scipy<1.13
+scikit-learn<1.5
+pandas
+pillow
+matplotlib
+tqdm
+PyYAML
+opencv-python
+
+# Data access / ingestion
+kaggle
+kagglehub
+yt_dlp
+
+# SWIN (PyTorch)
+torch
+torchvision
+timm
+
+# Dev / testing
+pytest
+
+
+tensorflow
+pyarrow
+imagehash
+open-clip-torch
+faiss-cpu
+

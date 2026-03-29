@@ -15,6 +15,9 @@ def _write_test_config(base_cfg: dict, tmp_path: Path) -> dict:
     cfg["paths"]["outputs_root"] = str((tmp_path / "outputs" / "runs").as_posix())
     cfg["data"] = dict(base_cfg["data"])
     cfg["data"]["skip_download"] = True
+    cfg["video"] = dict(base_cfg["video"])
+    cfg["video"]["enabled"] = False
+    cfg["video"]["urls"] = []
     cfg["prepare"] = dict(base_cfg["prepare"])
     cfg["prepare"]["overwrite"] = True
     cfg["prepare"]["augmentation"] = dict(base_cfg["prepare"]["augmentation"])

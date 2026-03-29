@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from pipeline.config import load_config
-from pipeline.stages import run_all, run_eval, run_infer, run_prepare, run_setup, run_train
+from pipeline.stages import run_all, run_audit, run_eval, run_infer, run_prepare, run_setup, run_train
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -29,6 +29,10 @@ def _build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--video-url", action="append", default=[], help="Video URL (repeatable)")
     prepare.add_argument("--force", action="store_true", help="Overwrite existing prepared dataset")
 
+    audit = subparsers.add_parser("audit", help="Run raw-data manifest + quality audit")
+    add_config_arg(audit)
+    audit.add_argument("--force", action="store_true", help="Overwrite existing audit artifacts")
+
     train = subparsers.add_parser("train", help="Train a model")
     add_config_arg(train)
     train.add_argument("--model", choices=["swin", "efficientnet"], required=True)
@@ -44,13 +48,14 @@ def _build_parser() -> argparse.ArgumentParser:
     infer.add_argument("--input", required=True, help="Input folder containing images")
     infer.add_argument("--run-dir", default="", help="Optional run directory override")
 
-    runall = subparsers.add_parser("run-all", help="Execute setup->prepare->train->eval->infer")
+    runall = subparsers.add_parser("run-all", help="Execute setup->audit->prepare->train->eval->infer")
     add_config_arg(runall)
     runall.add_argument("--model", choices=["swin", "efficientnet"], required=True)
     runall.add_argument("--with-video", action="store_true")
     runall.add_argument("--video-url", action="append", default=[], help="Video URL (repeatable)")
     runall.add_argument("--input", default="", help="Optional inference input override")
     runall.add_argument("--skip-setup", action="store_true")
+    runall.add_argument("--skip-audit", action="store_true")
     runall.add_argument("--skip-prepare", action="store_true")
     runall.add_argument("--skip-train", action="store_true")
     runall.add_argument("--skip-eval", action="store_true")
@@ -66,6 +71,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "setup":
         result = run_setup(cfg, force=args.force)
+    elif args.command == "audit":
+        result = run_audit(cfg, force=args.force)
     elif args.command == "prepare":
         result = run_prepare(
             cfg,
@@ -90,6 +97,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             video_urls=args.video_url,
             infer_input=infer_input,
             skip_setup=args.skip_setup,
+            skip_audit=args.skip_audit,
             skip_prepare=args.skip_prepare,
             skip_train=args.skip_train,
             skip_eval=args.skip_eval,
