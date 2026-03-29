@@ -26,9 +26,8 @@ audit:
   decode_failed_rate_threshold: 0.005
 
 video:
-  enabled: true
-  urls:
-    - https://www.youtube.com/watch?v=gS9o1FAszdk
+  enabled: false
+  urls: []
   output_subdir: video_frames
   blur_threshold: 7.0
   min_frame_stride: 100

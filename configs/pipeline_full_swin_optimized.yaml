@@ -37,5 +37,13 @@ artifacts:
   tag: full_swin_opt
   overwrite: false
 
+
+# Enable batch logging for SWIN
+training:
+  debug:
+    batch_logging:
+      enabled: true
+      every_n_steps: 1
+      interval_seconds: 0.0
 inference:
   default_input: data/prepared/deepdetect-2025/test
