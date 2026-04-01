@@ -7,3 +7,9 @@ scikit-learn
 pillow
 tqdm
 matplotlib
+numpy
+seaborn
+tensorflow
+jupyter
+nbconvert
+ipykernel
