@@ -66,6 +66,60 @@ def check_non_empty_split(root_dir: Path, split: str, class_names: Iterable[str]
     }
 
 
+def check_imagefolder_class_index_mapping(
+    prepared_root: Path,
+    class_names: Iterable[str],
+    splits: Iterable[str] = ("train", "val", "test"),
+) -> Dict[str, Any]:
+    class_names_list = list(class_names)
+    if not _spec_exists("torchvision"):
+        return {
+            "check": "imagefolder_class_index_mapping",
+            "ok": False,
+            "reason": "torchvision_not_installed",
+        }
+
+    from torchvision.datasets import ImageFolder
+
+    mapping_by_split: Dict[str, Dict[str, int]] = {}
+    classes_by_split: Dict[str, List[str]] = {}
+    missing_splits: List[str] = []
+    for split in splits:
+        split_dir = prepared_root / split
+        if not split_dir.exists():
+            missing_splits.append(split)
+            continue
+        dataset = ImageFolder(str(split_dir))
+        mapping_by_split[split] = {k: int(v) for k, v in dataset.class_to_idx.items()}
+        classes_by_split[split] = list(dataset.classes)
+
+    if missing_splits:
+        return {
+            "check": "imagefolder_class_index_mapping",
+            "ok": False,
+            "reason": "missing_split_dirs",
+            "missing_splits": missing_splits,
+        }
+
+    unique_mappings = {tuple(sorted(mapping.items())) for mapping in mapping_by_split.values()}
+    has_required_classes = all({"real", "fake"}.issubset(set(mapping.keys())) for mapping in mapping_by_split.values())
+    cfg_class_to_idx = {name: idx for idx, name in enumerate(class_names_list)}
+    cfg_fake_idx = cfg_class_to_idx.get("fake")
+    resolved_fake_idx = mapping_by_split.get("train", {}).get("fake")
+    matches_config_order = all(mapping == cfg_class_to_idx for mapping in mapping_by_split.values())
+
+    return {
+        "check": "imagefolder_class_index_mapping",
+        "ok": len(unique_mappings) == 1 and has_required_classes,
+        "mapping_by_split": mapping_by_split,
+        "classes_by_split": classes_by_split,
+        "cfg_class_to_idx": cfg_class_to_idx,
+        "cfg_fake_idx": cfg_fake_idx,
+        "resolved_fake_idx": resolved_fake_idx,
+        "matches_config_order": matches_config_order,
+    }
+
+
 def check_checkpoint_collision(checkpoint_path: Path, overwrite: bool) -> Dict[str, Any]:
     exists = checkpoint_path.exists()
     ok = overwrite or not exists

@@ -26,3 +26,10 @@ def test_config_sections_present() -> None:
 def test_class_contract_defaults() -> None:
     cfg = load_config(Path("configs/pipeline.yaml"))
     assert cfg["data"]["class_names"] == ["real", "fake"]
+
+
+def test_swin_train_mode_defaults_present() -> None:
+    cfg = load_config(Path("configs/pipeline.yaml"))
+    swin_opt = cfg["training"]["optimization"]["swin"]
+    assert swin_opt["train_mode"] == "full_finetune"
+    assert int(swin_opt["staged_unfreeze_head_epochs"]) >= 1

@@ -15,6 +15,31 @@ def _binary_label_from_class_idx(class_idx: np.ndarray, fake_idx: int) -> np.nda
     return (class_idx.astype(int) == int(fake_idx)).astype(int)
 
 
+def _resolve_fake_idx_from_class_to_idx(
+    class_to_idx: Dict[str, int],
+    cfg_class_names: Sequence[str],
+    stage: str,
+) -> int:
+    required = {"real", "fake"}
+    present = set(class_to_idx.keys())
+    if present != required:
+        raise RuntimeError(
+            f"[{stage}] Expected dataset classes {sorted(required)}, got {sorted(present)} with mapping {class_to_idx}"
+        )
+    cfg_fake_idx = list(cfg_class_names).index("fake")
+    ds_fake_idx = int(class_to_idx["fake"])
+    if ds_fake_idx != cfg_fake_idx:
+        print(
+            (
+                f"[{stage}] Config fake_idx={cfg_fake_idx} from class_names={list(cfg_class_names)} "
+                f"does not match dataset fake_idx={ds_fake_idx} from class_to_idx={class_to_idx}. "
+                "Using dataset class_to_idx mapping."
+            ),
+            flush=True,
+        )
+    return ds_fake_idx
+
+
 def _load_image_paths_for_inference(input_dir: Path) -> List[Path]:
     image_paths: List[Path] = []
     for ext in (".jpg", ".jpeg", ".png", ".bmp", ".webp"):
@@ -53,6 +78,45 @@ def _autocast_context(torch_module: Any, enabled: bool):
     if amp_module is not None and hasattr(amp_module, "autocast"):
         return amp_module.autocast(device_type="cuda", enabled=enabled)
     return torch_module.cuda.amp.autocast(enabled=enabled)
+
+
+def _normalize_swin_train_mode(value: Any) -> str:
+    mode = str(value or "full_finetune").strip().lower()
+    aliases = {
+        "full": "full_finetune",
+        "finetune": "full_finetune",
+        "full_finetune": "full_finetune",
+        "linear_probe": "linear_probe",
+        "linear-probe": "linear_probe",
+        "head_only": "linear_probe",
+        "head-only": "linear_probe",
+        "staged_unfreeze": "staged_unfreeze",
+        "staged-unfreeze": "staged_unfreeze",
+        "stage_unfreezed": "staged_unfreeze",
+        "stage-unfreezed": "staged_unfreeze",
+    }
+    resolved = aliases.get(mode)
+    if resolved is None:
+        raise ValueError(f"Unsupported SWIN train mode: {value}")
+    return resolved
+
+
+def _set_requires_grad_for_all(model: Any, enabled: bool) -> None:
+    for parameter in model.parameters():
+        parameter.requires_grad = enabled
+
+
+def _set_swin_head_trainable_only(model: Any) -> None:
+    _set_requires_grad_for_all(model, False)
+    head = getattr(model, "head", None)
+    if head is None:
+        raise RuntimeError("SWIN model does not expose 'head' module for linear probing.")
+    for parameter in head.parameters():
+        parameter.requires_grad = True
+
+
+def _count_trainable_parameters(model: Any) -> int:
+    return int(sum(int(p.numel()) for p in model.parameters() if p.requires_grad))
 
 
 def train_model(model_name: str, cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict[str, Any]:
@@ -99,7 +163,6 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
     train_dir = prepared_root / "train"
     val_dir = prepared_root / "val"
     class_names = cfg["data"]["class_names"]
-    fake_idx = class_names.index("fake")
     swin_opt = _cfg_get(cfg, ["training", "optimization", "swin"], {})
     dataloader_opt = _cfg_get(cfg, ["training", "optimization", "dataloader"], {})
 
@@ -138,6 +201,15 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
 
     train_ds = ImageFolder(str(train_dir), transform=train_tf)
     val_ds = ImageFolder(str(val_dir), transform=eval_tf)
+    if train_ds.class_to_idx != val_ds.class_to_idx:
+        raise RuntimeError(
+            f"SWIN class_to_idx mismatch between train and val. train={train_ds.class_to_idx}, val={val_ds.class_to_idx}"
+        )
+    fake_idx = _resolve_fake_idx_from_class_to_idx(
+        class_to_idx=train_ds.class_to_idx,
+        cfg_class_names=class_names,
+        stage="SWIN/train",
+    )
 
     num_workers = int(model_cfg["num_workers"])
     pin_memory = _resolve_flag(dataloader_opt.get("pin_memory", "auto"), auto_value=(device == "cuda"))
@@ -169,6 +241,14 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
     )
 
     model = timm.create_model(model_cfg["model_name"], pretrained=True, num_classes=1).to(device)
+    train_mode = _normalize_swin_train_mode(swin_opt.get("train_mode", "full_finetune"))
+    staged_unfreeze_head_epochs = max(1, int(swin_opt.get("staged_unfreeze_head_epochs", 1)))
+    staged_unfreeze_triggered = False
+    if train_mode == "full_finetune":
+        _set_requires_grad_for_all(model, True)
+    else:
+        _set_swin_head_trainable_only(model)
+
     base_lr = float(model_cfg["lr"])
     weight_decay = float(swin_opt.get("weight_decay", 0.01))
     optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
@@ -209,7 +289,9 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
             f"batch_size={model_cfg['batch_size']} steps_per_epoch={len(train_loader)} "
             f"num_workers={num_workers} num_threads={num_threads} "
             f"scheduler={scheduler_name} warmup_epochs={warmup_epochs} "
-            f"grad_accum={gradient_accumulation_steps} max_grad_norm={max_grad_norm}"
+            f"grad_accum={gradient_accumulation_steps} max_grad_norm={max_grad_norm} "
+            f"train_mode={train_mode} staged_unfreeze_head_epochs={staged_unfreeze_head_epochs} "
+            f"trainable_params={_count_trainable_parameters(model)}"
         ),
         flush=True,
     )
@@ -217,6 +299,17 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
     for epoch in range(total_epochs):
         epoch_start = time.perf_counter()
         last_batch_log_time = epoch_start - batch_log_interval_seconds
+        if train_mode == "staged_unfreeze" and (not staged_unfreeze_triggered) and epoch >= staged_unfreeze_head_epochs:
+            _set_requires_grad_for_all(model, True)
+            staged_unfreeze_triggered = True
+            print(
+                (
+                    f"[SWIN][staged_unfreeze] epoch={epoch + 1} "
+                    f"transitioned_to_full_finetune trainable_params={_count_trainable_parameters(model)}"
+                ),
+                flush=True,
+            )
+
         if warmup_epochs > 0 and epoch < warmup_epochs:
             warmup_lr = base_lr * float(epoch + 1) / float(warmup_epochs)
             for group in optimizer.param_groups:
@@ -331,7 +424,10 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
                     "model_state_dict": model.state_dict(),
                     "cfg": cfg,
                     "class_names": class_names,
+                    "class_to_idx": train_ds.class_to_idx,
                     "fake_idx": fake_idx,
+                    "swin_train_mode": train_mode,
+                    "staged_unfreeze_head_epochs": staged_unfreeze_head_epochs,
                     "best_threshold": best_threshold,
                     "best_val_balanced_accuracy": best_val_score,
                     "best_val_auc": best_auc,
@@ -383,6 +479,10 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
             "max_grad_norm": max_grad_norm,
             "weight_decay": weight_decay,
             "amp": use_amp,
+            "train_mode": train_mode,
+            "staged_unfreeze_head_epochs": staged_unfreeze_head_epochs,
+            "staged_unfreeze_triggered": staged_unfreeze_triggered,
+            "trainable_params_final": _count_trainable_parameters(model),
         },
         "history": history,
     }
@@ -401,7 +501,7 @@ def _evaluate_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> D
         raise RuntimeError(f"Swin checkpoint missing: {checkpoint_path}")
 
     ckpt = torch.load(checkpoint_path, map_location="cpu")
-    fake_idx = int(ckpt.get("fake_idx", cfg["data"]["class_names"].index("fake")))
+    ckpt_fake_idx = int(ckpt.get("fake_idx", cfg["data"]["class_names"].index("fake")))
     best_threshold = float(ckpt.get("best_threshold", cfg["training"]["default_threshold"]))
 
     mean = (0.485, 0.456, 0.406)
@@ -414,6 +514,21 @@ def _evaluate_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> D
         ]
     )
     test_ds = ImageFolder(str(prepared_root / "test"), transform=test_tf)
+    eval_fake_idx = _resolve_fake_idx_from_class_to_idx(
+        class_to_idx=test_ds.class_to_idx,
+        cfg_class_names=cfg["data"]["class_names"],
+        stage="SWIN/eval",
+    )
+    ckpt_class_to_idx = ckpt.get("class_to_idx")
+    if ckpt_class_to_idx is not None and dict(ckpt_class_to_idx) != dict(test_ds.class_to_idx):
+        raise RuntimeError(
+            f"SWIN checkpoint class_to_idx mismatch. checkpoint={ckpt_class_to_idx}, test={test_ds.class_to_idx}"
+        )
+    if ckpt_fake_idx != eval_fake_idx:
+        raise RuntimeError(
+            f"SWIN checkpoint fake_idx ({ckpt_fake_idx}) does not match test dataset fake_idx ({eval_fake_idx}). "
+            "This checkpoint likely used inconsistent class mapping. Retrain with current mapping fix."
+        )
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dataloader_opt = _cfg_get(cfg, ["training", "optimization", "dataloader"], {})
     num_workers = int(model_cfg["num_workers"])
@@ -451,7 +566,7 @@ def _evaluate_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> D
             all_y_raw.append(y.numpy())
 
     y_raw = np.concatenate(all_y_raw).astype(int)
-    y_bin = _binary_label_from_class_idx(y_raw, fake_idx=fake_idx)
+    y_bin = _binary_label_from_class_idx(y_raw, fake_idx=eval_fake_idx)
     probs = sigmoid(np.concatenate(all_logits))
     metrics = compute_binary_metrics(y_bin, probs, best_threshold)
 
@@ -463,7 +578,7 @@ def _evaluate_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> D
         predictions.append(
             {
                 "path": str(path),
-                "true_label": int(class_idx == fake_idx),
+                "true_label": int(class_idx == eval_fake_idx),
                 "prob_fake": prob,
                 "pred_label": pred,
                 "threshold": float(best_threshold),

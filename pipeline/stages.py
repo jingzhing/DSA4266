@@ -24,6 +24,7 @@ from pipeline.preflight import (
     check_checkpoint_collision,
     check_class_folders,
     check_dependencies,
+    check_imagefolder_class_index_mapping,
     check_non_empty_split,
     check_split_ratio,
     summarize_preflight,
@@ -502,6 +503,7 @@ def _build_train_eval_preflight(cfg: Dict[str, Any], model_name: str, run_dir: P
         check_non_empty_split(prepared_root, "train", class_names),
         check_non_empty_split(prepared_root, "val", class_names),
         check_non_empty_split(prepared_root, "test", class_names),
+        check_imagefolder_class_index_mapping(prepared_root, class_names),
         check_checkpoint_collision(
             _model_checkpoint_path(model_name, run_dir),
             overwrite=bool(cfg["artifacts"]["overwrite"]),

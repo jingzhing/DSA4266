@@ -21,9 +21,6 @@ timm
 
 # Dev / testing
 pytest
-
-
-tensorflow
 pyarrow
 imagehash
 open-clip-torch

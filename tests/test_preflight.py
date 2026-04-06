@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import pytest
 
 from pipeline.config import load_config
+from pipeline.preflight import check_imagefolder_class_index_mapping
 from pipeline.stages import run_prepare
-from tests.helpers import create_tiny_raw_dataset
+from tests.helpers import create_tiny_raw_dataset, make_image
 
 
 def _cfg_for_tmp(tmp_path: Path) -> dict:
@@ -49,3 +51,27 @@ def test_missing_class_folder_fails(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError):
         run_prepare(cfg, with_video=False, video_urls=None, force=True)
+
+
+@pytest.mark.skipif(importlib.util.find_spec("torchvision") is None, reason="torchvision not installed")
+def test_imagefolder_class_index_mapping_reports_split_mappings(tmp_path: Path) -> None:
+    prepared_root = tmp_path / "prepared"
+    for split in ["train", "val", "test"]:
+        make_image(prepared_root / split / "real" / f"real_{split}.jpg", seed=1)
+        make_image(prepared_root / split / "fake" / f"fake_{split}.jpg", seed=2)
+
+    check = check_imagefolder_class_index_mapping(prepared_root, ["real", "fake"])
+    assert check["ok"] is True
+    assert check["resolved_fake_idx"] == 0
+    assert check["mapping_by_split"]["train"] == {"fake": 0, "real": 1}
+    assert check["matches_config_order"] is False
+
+
+@pytest.mark.skipif(importlib.util.find_spec("torchvision") is None, reason="torchvision not installed")
+def test_imagefolder_class_index_mapping_fails_when_required_class_missing(tmp_path: Path) -> None:
+    prepared_root = tmp_path / "prepared"
+    for split in ["train", "val", "test"]:
+        make_image(prepared_root / split / "real" / f"real_{split}.jpg", seed=3)
+
+    check = check_imagefolder_class_index_mapping(prepared_root, ["real", "fake"])
+    assert check["ok"] is False

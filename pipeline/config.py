@@ -105,6 +105,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                 "prefetch_factor": 2,
             },
             "swin": {
+                "train_mode": "full_finetune",
+                "staged_unfreeze_head_epochs": 1,
                 "gradient_accumulation_steps": 1,
                 "max_grad_norm": 1.0,
                 "weight_decay": 0.01,
