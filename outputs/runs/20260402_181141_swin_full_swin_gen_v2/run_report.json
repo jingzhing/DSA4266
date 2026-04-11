@@ -1,0 +1,60 @@
+{
+  "generated_at_utc": "2026-04-02T21:20:37.729466+00:00",
+  "model": "swin",
+  "dataset_version": "deepdetect-2025",
+  "run_dir": "/home/ubuntu/work/DSA4266/outputs/runs/20260402_181141_swin_full_swin_gen_v2",
+  "metrics": {
+    "accuracy": 0.5892385410390694,
+    "balanced_accuracy": 0.6035482684268589,
+    "precision": 0.5398753894080996,
+    "recall": 0.9999038369073949,
+    "f1": 0.7011699652719242,
+    "threshold": 0.05,
+    "roc_auc": 0.9575664051405632,
+    "temperature": 1.8736402988433838,
+    "val_selected_threshold": 0.05,
+    "val_constraint_fake_recall": 0.9995191151719162,
+    "val_constraint_real_recall": 0.9999999999999998,
+    "val_constraint_balanced_accuracy": 0.9997595575859579,
+    "val_constraint_feasible": true,
+    "pr_auc_fake": 0.9458470761952166,
+    "pr_auc_real": 0.9654380408100853
+  },
+  "confusion_counts": {
+    "threshold": 0.05,
+    "tn": 2316,
+    "fp": 8862,
+    "fn": 1,
+    "tp": 10398
+  },
+  "classwise_metrics": {
+    "threshold": 0.05,
+    "real": {
+      "precision": 0.9995684074233919,
+      "recall": 0.2071926999463231,
+      "f1": 0.3432382363835614,
+      "support": 11178
+    },
+    "fake": {
+      "precision": 0.5398753894080996,
+      "recall": 0.9999038369073948,
+      "f1": 0.7011699652714687,
+      "support": 10399
+    }
+  },
+  "calibration": {
+    "ece": 0.35619412007025153,
+    "brier_score": 0.3382904016615,
+    "n_bins": 10
+  },
+  "prediction_count": 21577,
+  "error_counts": {
+    "false_positive": 8862,
+    "false_negative": 1
+  },
+  "provenance": {
+    "python_version": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+    "platform": "Linux-6.8.0-1050-aws-x86_64-with-glibc2.35",
+    "config_path": "/home/ubuntu/work/DSA4266/configs/pipeline_full_swin_generalization_v2.yaml"
+  }
+}

@@ -1,0 +1,16 @@
+metric,value
+accuracy,0.6156092135143904
+balanced_accuracy,0.6289899962338272
+precision,0.5563286058335564
+recall,0.9996153476295798
+f1,0.7148260211800302
+threshold,0.05
+roc_auc,0.9628771878587565
+temperature,1.6867003440856934
+val_selected_threshold,0.05
+val_constraint_fake_recall,0.9997594997594995
+val_constraint_real_recall,0.9999999999999998
+val_constraint_balanced_accuracy,0.9998797498797496
+val_constraint_feasible,True
+pr_auc_fake,0.9464336795571994
+pr_auc_real,0.9692773775133325

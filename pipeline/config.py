@@ -46,6 +46,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "prepare": {
         "val_ratio": 0.1,
+        "validation_protocol": "random",
         "overwrite": False,
         "copy_test_from_raw": True,
         "augmentation": {
@@ -98,6 +99,30 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "threshold_metric": "balanced_acc",
         "default_threshold": 0.5,
         "runtime_augmentation": False,
+        "advanced": {
+            "selection": {
+                "enabled": False,
+                "min_fake_recall": 0.95,
+            },
+            "hard_negative_mining": {
+                "enabled": False,
+                "top_k": 2048,
+                "real_weight_multiplier": 3.0,
+                "min_epoch_to_start": 2,
+                "update_every_epochs": 1,
+            },
+            "robust_augmentation": {
+                "enabled": False,
+            },
+            "calibration": {
+                "enabled": False,
+                "max_steps": 200,
+                "lr": 0.05,
+            },
+            "evaluation": {
+                "prefer_checkpoint_threshold": False,
+            },
+        },
         "optimization": {
             "dataloader": {
                 "pin_memory": "auto",
