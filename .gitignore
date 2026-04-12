@@ -1,9 +1,0 @@
-.venv/
-__pycache__/
-*.pyc
-outputs/
-data/
-models/**/checkpoints/
-models/**/runs/
-.ipynb_checkpoints/
-.DS_Store

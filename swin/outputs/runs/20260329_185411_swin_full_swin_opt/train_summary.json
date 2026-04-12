@@ -1,0 +1,82 @@
+{
+  "checkpoint_path": "/home/ubuntu/work/DSA4266/outputs/runs/20260329_185411_swin_full_swin_opt/model_checkpoint.pt",
+  "best_threshold": 0.05,
+  "best_val_balanced_accuracy": 0.9996926859250151,
+  "best_val_auc": 0.9999996551737558,
+  "best_epoch": 7,
+  "epochs_ran": 8,
+  "optimizer": {
+    "scheduler": "cosine",
+    "warmup_epochs": 1,
+    "gradient_accumulation_steps": 1,
+    "max_grad_norm": 1.0,
+    "weight_decay": 0.01,
+    "amp": false
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.11321796718305786,
+      "val_balanced_accuracy": 0.9936994087559953,
+      "val_roc_auc": 0.9998932023860596,
+      "threshold": 0.95,
+      "lr": 0.0001
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.05323590656236662,
+      "val_balanced_accuracy": 0.9966288062228721,
+      "val_roc_auc": 0.9999425125389906,
+      "threshold": 0.85,
+      "lr": 0.0001
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.037518886272639856,
+      "val_balanced_accuracy": 0.9926665063717237,
+      "val_roc_auc": 0.9999639410270276,
+      "threshold": 0.95,
+      "lr": 9.509795896116975e-05
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.02413273221378691,
+      "val_balanced_accuracy": 0.9981475934157693,
+      "val_roc_auc": 0.9999858128630928,
+      "threshold": 0.95,
+      "lr": 8.136274519200731e-05
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.013284225462582854,
+      "val_balanced_accuracy": 0.9981831597798213,
+      "val_roc_auc": 0.9999800000778323,
+      "threshold": 0.05,
+      "lr": 6.151478623083756e-05
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.007753698085983072,
+      "val_balanced_accuracy": 0.998975619750051,
+      "val_roc_auc": 0.9999945813018757,
+      "threshold": 0.1,
+      "lr": 3.9485213769162445e-05
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.0028195082824315687,
+      "val_balanced_accuracy": 0.9996926859250151,
+      "val_roc_auc": 0.9999996551737558,
+      "threshold": 0.05,
+      "lr": 1.9637254807992697e-05
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.0008631928431870359,
+      "val_balanced_accuracy": 0.9996926859250151,
+      "val_roc_auc": 0.9999999014782159,
+      "threshold": 0.05,
+      "lr": 5.902041038830258e-06
+    }
+  ]
+}

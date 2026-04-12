@@ -1,0 +1,40 @@
+{
+  "run_dir": "/home/ubuntu/work/DSA4266/outputs/runs/20260410_152158_swin_full_swin_gen_v2",
+  "quality_gate": {
+    "passed": false,
+    "real_recall": 0.7371622830560027,
+    "fake_recall": 0.9783633041638617,
+    "ece": 0.18568601870219242,
+    "balanced_accuracy": 0.8577627936099322,
+    "roc_auc": 0.9735159977860293
+  },
+  "constraints": {
+    "min_real_recall": 0.3,
+    "min_fake_recall": 0.95,
+    "max_ece": 0.15
+  },
+  "hypotheses": [
+    {
+      "id": "miscalibration",
+      "evidence": {
+        "ece": 0.18568601870219242,
+        "max_ece": 0.15
+      },
+      "summary": "Probabilities are poorly calibrated for operational decision-making."
+    },
+    {
+      "id": "suboptimal_operating_point",
+      "evidence": {
+        "current_threshold": 0.85,
+        "suggested_threshold": 0.95,
+        "suggested_real_recall": 0.8156199677938807,
+        "suggested_fake_recall": 0.9649966342917586
+      },
+      "summary": "Threshold in use may not be optimal under fake-recall constraint."
+    }
+  ],
+  "recommended_actions": [
+    "Increase calibration fitting budget or test isotonic regression fallback.",
+    "Use constrained threshold selected from validation sweep artifacts."
+  ]
+}

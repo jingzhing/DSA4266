@@ -1,0 +1,24 @@
+{
+  "generated_at_utc": "2026-04-01T20:52:51.088808+00:00",
+  "model": "swin",
+  "epochs_ran": 8,
+  "best_epoch": 8,
+  "best_val_balanced_accuracy": 0.9999999999999998,
+  "best_val_auc": 1.0,
+  "best_threshold": 0.6,
+  "optimizer": {
+    "scheduler": "cosine",
+    "warmup_epochs": 1,
+    "gradient_accumulation_steps": 1,
+    "max_grad_norm": 1.0,
+    "weight_decay": 0.01,
+    "amp": false
+  },
+  "provenance": {
+    "python_version": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+    "platform": "Linux-6.8.0-1050-aws-x86_64-with-glibc2.35",
+    "config_path": "/home/ubuntu/work/DSA4266/configs/pipeline_full_swin_optimized.yaml",
+    "dataset_version": "deepdetect-2025",
+    "seed": 42
+  }
+}
