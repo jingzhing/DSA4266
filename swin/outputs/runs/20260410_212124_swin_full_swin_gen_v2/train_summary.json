@@ -1,0 +1,141 @@
+{
+  "checkpoint_path": "/home/ubuntu/work/DSA4266/outputs/runs/20260410_212124_swin_full_swin_gen_v2/model_checkpoint.pt",
+  "best_threshold": 0.05,
+  "best_val_balanced_accuracy": 0.9996392496392494,
+  "best_val_auc": 0.9999999014545214,
+  "best_val_real_recall": 0.9999999999999998,
+  "best_val_fake_recall": 0.9992784992784991,
+  "selection_constraint_feasible": true,
+  "best_epoch": 8,
+  "epochs_ran": 8,
+  "optimizer": {
+    "scheduler": "cosine",
+    "warmup_epochs": 1,
+    "gradient_accumulation_steps": 2,
+    "max_grad_norm": 1.0,
+    "weight_decay": 0.01,
+    "amp": false
+  },
+  "advanced": {
+    "selection": {
+      "enabled": true,
+      "min_fake_recall": 0.95
+    },
+    "hard_negative_mining": {
+      "enabled": true,
+      "top_k": 4000,
+      "real_weight_multiplier": 4.0,
+      "min_epoch_to_start": 2,
+      "update_every_epochs": 1
+    },
+    "robust_augmentation": {
+      "enabled": true
+    }
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.15157209662847987,
+      "val_balanced_accuracy": 0.9890616736037754,
+      "val_roc_auc": 0.9997344692079377,
+      "val_pr_auc_fake": 0.9996914064068215,
+      "val_pr_auc_real": 0.9997777542593148,
+      "val_real_recall": 0.9985658676500715,
+      "val_fake_recall": 0.9795574795574793,
+      "constraint_feasible": true,
+      "threshold": 0.95,
+      "lr": 0.0001
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.07988590329435682,
+      "val_balanced_accuracy": 0.996708679560554,
+      "val_roc_auc": 0.9999362164389822,
+      "val_pr_auc_fake": 0.9999234888970306,
+      "val_pr_auc_real": 0.9999476147078293,
+      "val_real_recall": 0.9977463634501125,
+      "val_fake_recall": 0.9956709956709955,
+      "constraint_feasible": true,
+      "threshold": 0.95,
+      "lr": 0.0001
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.06639302677726004,
+      "val_balanced_accuracy": 0.9862068603617464,
+      "val_roc_auc": 0.999905051431378,
+      "val_pr_auc_fake": 0.9998892189731061,
+      "val_pr_auc_real": 0.9999196587201642,
+      "val_real_recall": 0.9995902479000203,
+      "val_fake_recall": 0.9728234728234726,
+      "constraint_feasible": true,
+      "threshold": 0.95,
+      "lr": 9.509795896116975e-05
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.048653106906526154,
+      "val_balanced_accuracy": 0.9971139971139968,
+      "val_roc_auc": 0.9999792561767566,
+      "val_pr_auc_fake": 0.9999760728069615,
+      "val_pr_auc_real": 0.9999821755274015,
+      "val_real_recall": 0.9999999999999998,
+      "val_fake_recall": 0.994227994227994,
+      "constraint_feasible": true,
+      "threshold": 0.15,
+      "lr": 8.136274519200731e-05
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.030226228247872206,
+      "val_balanced_accuracy": 0.9950697450697448,
+      "val_roc_auc": 0.9999885194517442,
+      "val_pr_auc_fake": 0.9999866409688661,
+      "val_pr_auc_real": 0.9999902017769867,
+      "val_real_recall": 0.9999999999999998,
+      "val_fake_recall": 0.9901394901394899,
+      "constraint_feasible": true,
+      "threshold": 0.95,
+      "lr": 6.151478623083756e-05
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.019135009597483148,
+      "val_balanced_accuracy": 0.9986772486772484,
+      "val_roc_auc": 0.9999966001809887,
+      "val_pr_auc_fake": 0.9999960291269759,
+      "val_pr_auc_real": 0.9999970995668276,
+      "val_real_recall": 0.9999999999999998,
+      "val_fake_recall": 0.9973544973544971,
+      "constraint_feasible": true,
+      "threshold": 0.39999999999999997,
+      "lr": 3.9485213769162445e-05
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.010895580625809496,
+      "val_balanced_accuracy": 0.9992784992784991,
+      "val_roc_auc": 0.9999932989074558,
+      "val_pr_auc_fake": 0.9999922427047164,
+      "val_pr_auc_real": 0.9999942598387498,
+      "val_real_recall": 0.9999999999999998,
+      "val_fake_recall": 0.9985569985569983,
+      "constraint_feasible": true,
+      "threshold": 0.05,
+      "lr": 1.9637254807992697e-05
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.005307529040976196,
+      "val_balanced_accuracy": 0.9996392496392494,
+      "val_roc_auc": 0.9999999014545214,
+      "val_pr_auc_fake": 0.9999998843748844,
+      "val_pr_auc_real": 0.999999916060206,
+      "val_real_recall": 0.9999999999999998,
+      "val_fake_recall": 0.9992784992784991,
+      "constraint_feasible": true,
+      "threshold": 0.05,
+      "lr": 5.902041038830258e-06
+    }
+  ]
+}

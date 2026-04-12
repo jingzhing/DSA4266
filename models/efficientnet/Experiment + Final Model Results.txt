@@ -1,0 +1,48 @@
+ ── Experiment 1 Summary (Training Type) ──
+  Training Type	       Test Acc   Avg Epoch (s)
+  Full Finetune        0.9283            71.8
+  Partial Finetun      0.8856            29.8
+  Classifier Head      0.6821            29.8
+
+
+  ── Experiment 2 Summary (Optimizer Comparison) ──
+  Optimizer      Test Acc
+  adamw            0.9068
+  sgd              0.6945
+  rmsprop          0.8597
+
+
+  ── Experiment 3 Summary (EfficientNet Base Model) ──
+  Variant    Test Acc 		Avg Epoch Train Time(s)  Inference Time (ms/img)
+  b0           0.8976            36.8          		 3.114
+  b2           0.8679            57.4          		 4.966
+  b3           0.9123            94.6         		 6.898
+
+
+ ── Experiment 4 Summary (Learning Rate) ──
+  LR         Test Acc
+  1e-04        0.8829
+  5e-04        0.8824
+  1e-03        0.8829
+
+
+  ── Experiment 5 Summary (Dropout) ──
+  Dropout        Test Acc
+  drop=0.2         0.8923
+  drop=0.3         0.8463
+  drop=0.4         0.8521
+
+
+
+Final Training
+Loss=0.6964  |  Acc=0.8817
+
+Classification Report:
+              precision    recall  f1-score   support
+
+        Real       0.96      0.81      0.88      2275
+        Fake       0.82      0.96      0.89      2079
+
+    accuracy                           0.88      4354
+   macro avg       0.89      0.89      0.88      4354
+weighted avg       0.89      0.88      0.88      4354

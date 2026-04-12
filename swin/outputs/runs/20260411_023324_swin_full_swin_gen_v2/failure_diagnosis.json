@@ -1,0 +1,39 @@
+{
+  "run_dir": "/home/ubuntu/work/DSA4266/outputs/runs/20260411_023324_swin_full_swin_gen_v2",
+  "quality_gate": {
+    "passed": false,
+    "real_recall": 0.6281087851136159,
+    "fake_recall": 0.9776901625156263,
+    "ece": 0.2717124182490328,
+    "balanced_accuracy": 0.8028994738146211,
+    "roc_auc": 0.9568123619247078
+  },
+  "constraints": {
+    "min_real_recall": 0.3,
+    "min_fake_recall": 0.95,
+    "max_ece": 0.15
+  },
+  "hypotheses": [
+    {
+      "id": "miscalibration",
+      "evidence": {
+        "ece": 0.2717124182490328,
+        "max_ece": 0.15
+      },
+      "summary": "Probabilities are poorly calibrated for operational decision-making."
+    },
+    {
+      "id": "poor_class_separation",
+      "evidence": {
+        "mean_prob_true_real": 0.5322803720926758,
+        "mean_prob_true_fake": 0.9916250456108715
+      },
+      "summary": "Both classes are scored as fake-like, indicating representation/domain-shift issues."
+    }
+  ],
+  "recommended_actions": [
+    "Increase calibration fitting budget or test isotonic regression fallback.",
+    "Increase real-class diversity and apply symmetric robustness augmentations.",
+    "Inspect top false positives and mine subtype clusters for targeted data enrichment."
+  ]
+}
