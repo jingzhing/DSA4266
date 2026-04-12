@@ -1,0 +1,17 @@
+{
+  "accuracy": 0.5892385410390694,
+  "balanced_accuracy": 0.6035482684268589,
+  "precision": 0.5398753894080996,
+  "recall": 0.9999038369073949,
+  "f1": 0.7011699652719242,
+  "threshold": 0.05,
+  "roc_auc": 0.9575664051405632,
+  "temperature": 1.8736402988433838,
+  "val_selected_threshold": 0.05,
+  "val_constraint_fake_recall": 0.9995191151719162,
+  "val_constraint_real_recall": 0.9999999999999998,
+  "val_constraint_balanced_accuracy": 0.9997595575859579,
+  "val_constraint_feasible": true,
+  "pr_auc_fake": 0.9458470761952166,
+  "pr_auc_real": 0.9654380408100853
+}

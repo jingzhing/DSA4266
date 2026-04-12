@@ -1,0 +1,62 @@
+{
+  "run_dir": "/home/ubuntu/work/DSA4266/outputs/runs/20260402_181141_swin_full_swin_gen_v2",
+  "quality_gate": {
+    "passed": false,
+    "real_recall": 0.2071926999463231,
+    "fake_recall": 0.9999038369073948,
+    "ece": 0.35619412007025153,
+    "balanced_accuracy": 0.6035482684268589,
+    "roc_auc": 0.9575664051405632
+  },
+  "constraints": {
+    "min_real_recall": 0.3,
+    "min_fake_recall": 0.95,
+    "max_ece": 0.15
+  },
+  "hypotheses": [
+    {
+      "id": "fp_dominant_boundary",
+      "evidence": {
+        "real_recall": 0.2071926999463231,
+        "fake_recall": 0.9999038369073948,
+        "fp": 8862,
+        "fn": 1
+      },
+      "summary": "Decision boundary is too permissive for fake predictions (FP-dominant failure)."
+    },
+    {
+      "id": "miscalibration",
+      "evidence": {
+        "ece": 0.35619412007025153,
+        "max_ece": 0.15
+      },
+      "summary": "Probabilities are poorly calibrated for operational decision-making."
+    },
+    {
+      "id": "suboptimal_operating_point",
+      "evidence": {
+        "current_threshold": 0.05,
+        "suggested_threshold": 0.95,
+        "suggested_real_recall": 0.43129361245303266,
+        "suggested_fake_recall": 0.9980767381478987
+      },
+      "summary": "Threshold in use may not be optimal under fake-recall constraint."
+    },
+    {
+      "id": "poor_class_separation",
+      "evidence": {
+        "mean_prob_true_real": 0.6885122073168093,
+        "mean_prob_true_fake": 0.9989817362600754
+      },
+      "summary": "Both classes are scored as fake-like, indicating representation/domain-shift issues."
+    }
+  ],
+  "recommended_actions": [
+    "Increase hard-negative mining intensity for real class (higher top_k/weight multiplier).",
+    "Keep constrained thresholding with fake-recall floor and maximize real recall.",
+    "Increase calibration fitting budget or test isotonic regression fallback.",
+    "Use constrained threshold selected from validation sweep artifacts.",
+    "Increase real-class diversity and apply symmetric robustness augmentations.",
+    "Inspect top false positives and mine subtype clusters for targeted data enrichment."
+  ]
+}

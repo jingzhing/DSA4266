@@ -1,0 +1,46 @@
+project:
+  seed: 42
+
+data:
+  dataset_version: deepdetect-2025-verify-small
+  skip_download: true
+
+models:
+  swin:
+    model_name: swin_tiny_patch4_window7_224
+    img_size: 224
+    batch_size: 16
+    epochs: 8
+    lr: 0.0001
+    num_workers: 12
+
+training:
+  runtime_augmentation: false
+  optimization:
+    dataloader:
+      pin_memory: false
+      persistent_workers: true
+      prefetch_factor: 4
+    swin:
+      gradient_accumulation_steps: 2
+      max_grad_norm: 1.0
+      weight_decay: 0.01
+      scheduler: cosine
+      warmup_epochs: 1
+      min_lr: 1.0e-6
+      early_stopping_patience: 2
+      early_stopping_min_delta: 0.0
+      amp: false
+      num_threads: 16
+  debug:
+    batch_logging:
+      enabled: true
+      every_n_steps: 1
+      interval_seconds: 1.0
+
+artifacts:
+  tag: full_swin_opt_verify
+  overwrite: false
+
+inference:
+  default_input: data/prepared/deepdetect-2025-verify-small/test

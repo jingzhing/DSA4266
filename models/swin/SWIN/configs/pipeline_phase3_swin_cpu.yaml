@@ -1,0 +1,120 @@
+project:
+  name: DSA4266-ai-image-detection
+  seed: 42
+
+paths:
+  data_root: data
+  raw_root: data/raw
+  prepared_root: data/prepared
+  outputs_root: outputs/runs
+
+data:
+  dataset_id: ayushmandatta1/deepdetect-2025
+  dataset_version: deepdetect-2025-swin-phase3-cpu
+  raw_train_subdir: ddata/train
+  raw_test_subdir: ddata/test
+  class_names:
+    - real
+    - fake
+  skip_download: true
+  additional_train_roots: []
+  additional_class_dirs:
+    real: []
+    fake: []
+
+audit:
+  decode_failed_rate_threshold: 0.005
+
+video:
+  enabled: true
+  urls:
+    - https://www.youtube.com/watch?v=gS9o1FAszdk
+  output_subdir: video_frames
+  blur_threshold: 7.0
+  min_frame_stride: 100
+  max_frame_stride: 600
+  seed: 42
+  cleanup_video_file: true
+
+prepare:
+  val_ratio: 0.1
+  overwrite: false
+  copy_test_from_raw: true
+  augmentation:
+    enabled: true
+    target_class: fake
+    max_multiplier: 1.25
+    probabilities:
+      hflip: 0.5
+      vflip: 0.1
+      gaussian_blur: 0.25
+      random_erase: 0.2
+      rotate: 0.2
+      brightness_contrast: 0.3
+      gaussian_noise: 0.15
+      jpeg_compression: 0.15
+    erase_area_range: [0.05, 0.2]
+    blur_kernel: 5
+    blur_sigma_min: 0.3
+    blur_sigma_max: 1.5
+    rotate_degrees: 12.0
+    brightness_limit: 0.15
+    contrast_limit: 0.2
+    noise_sigma_min: 3.0
+    noise_sigma_max: 12.0
+    jpeg_quality_min: 45
+    jpeg_quality_max: 95
+
+models:
+  swin:
+    model_name: swin_tiny_patch4_window7_224
+    img_size: 224
+    batch_size: 8
+    epochs: 1
+    lr: 0.0001
+    num_workers: 0
+  efficientnet:
+    variant: B0
+    img_size: 224
+    batch_size: 16
+    epochs: 5
+    lr: 0.0001
+    freeze_backbone: true
+    dropout: 0.3
+
+training:
+  threshold_metric: balanced_acc
+  default_threshold: 0.5
+  runtime_augmentation: false
+  optimization:
+    dataloader:
+      pin_memory: auto
+      persistent_workers: auto
+      prefetch_factor: 2
+    swin:
+      gradient_accumulation_steps: 1
+      max_grad_norm: 1.0
+      weight_decay: 0.01
+      scheduler: cosine
+      warmup_epochs: 0
+      min_lr: 1.0e-6
+      early_stopping_patience: 1
+      early_stopping_min_delta: 0.0
+      amp: false
+      num_threads: 0
+    efficientnet:
+      early_stopping_patience: 1
+      early_stopping_min_delta: 0.0
+      reduce_lr_patience: 1
+      reduce_lr_factor: 0.5
+      min_lr: 1.0e-6
+
+evaluation:
+  save_confusion_matrix: true
+
+inference:
+  default_input: data/prepared/deepdetect-2025-swin-phase3-cpu/test
+
+artifacts:
+  tag: phase3_swin_cpu
+  overwrite: false

@@ -1,0 +1,5 @@
+path,true_label,pred_label,prob_fake
+/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0006047.jpg,1,0,0.017129873856902122
+/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0006782.jpg,1,0,0.02274007350206375
+/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0006084.jpg,1,0,0.0270759966224432
+/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0000819.jpg,1,0,0.042881082743406296
