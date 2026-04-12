@@ -1,1 +1,0 @@
-{'run_dir': 'outputs/runs/20260329_185411_swin_full_swin_opt', 'metrics': {'accuracy': 0.5325128581925055, 'balanced_accuracy': 0.5525730693488378, 'precision': 0.9934047815333883, 'recall': 0.1059154434385163, 'f1': 0.19142176330420968, 'threshold': 0.05, 'roc_auc': 0.9876100655143928}}

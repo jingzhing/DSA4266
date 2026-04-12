@@ -1,34 +1,12 @@
-numpy<2
-scipy<1.13
-scikit-learn<1.5
-pandas
-pillow
-matplotlib
-tqdm
-PyYAML
-opencv-python
-
-# Data access / ingestion
-kaggle
-kagglehub
-yt_dlp
-
-# SWIN (PyTorch)
 torch
 torchvision
 timm
-
-# Dev / testing
-pytest
-
-
-tensorflow
-pyarrow
-imagehash
-open-clip-torch
-faiss-cpu
-
-
+kagglehub
+pandas
+scikit-learn
+pillow
+tqdm
+matplotlib
 numpy
 seaborn
 tensorflow

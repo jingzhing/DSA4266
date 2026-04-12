@@ -1,9 +1,0 @@
-path,true_label,pred_label,prob_fake
-/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0004305.jpg,0,1,0.9999998807907104
-/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0002017.jpg,0,1,0.999990701675415
-/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0001763.jpg,0,1,0.999782145023346
-/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0007812.jpg,0,1,0.9926962852478027
-/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0007640.jpg,0,1,0.9918662905693054
-/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0004666.jpg,0,1,0.9917002320289612
-/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0000189.jpg,0,1,0.8526201248168945
-/home/ubuntu/work/DSA4266/data/prepared/deepdetect-2025/test/fake/fake_test_0006084.jpg,0,1,0.052447572350502014
