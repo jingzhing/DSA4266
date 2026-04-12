@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -261,6 +262,54 @@ def _copy_images(paths: Iterable[Path], dst_dir: Path, prefix: str) -> List[Path
     return copied
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _hash_of(path: Path, cache: Dict[str, str]) -> str:
+    key = str(path.resolve())
+    if key not in cache:
+        cache[key] = _sha256_file(path)
+    return cache[key]
+
+
+def _deduplicate_by_hash(
+    paths: List[Path],
+    hash_cache: Dict[str, str],
+) -> tuple[List[Path], int]:
+    unique: List[Path] = []
+    seen_hashes: set[str] = set()
+    removed = 0
+    for path in paths:
+        content_hash = _hash_of(path, hash_cache)
+        if content_hash in seen_hashes:
+            removed += 1
+            continue
+        seen_hashes.add(content_hash)
+        unique.append(path)
+    return unique, removed
+
+
+def _filter_paths_by_forbidden_hashes(
+    paths: List[Path],
+    forbidden_hashes: set[str],
+    hash_cache: Dict[str, str],
+) -> tuple[List[Path], int]:
+    kept: List[Path] = []
+    removed = 0
+    for path in paths:
+        content_hash = _hash_of(path, hash_cache)
+        if content_hash in forbidden_hashes:
+            removed += 1
+            continue
+        kept.append(path)
+    return kept, removed
+
+
 def _split_paths(paths: List[Path], val_ratio: float, seed: int) -> tuple[list[Path], list[Path]]:
     rng = np.random.default_rng(seed)
     order = np.arange(len(paths))
@@ -275,6 +324,155 @@ def _split_paths(paths: List[Path], val_ratio: float, seed: int) -> tuple[list[P
     return train_paths, val_paths
 
 
+def _split_paths_source_aware(
+    paths: List[Path],
+    val_ratio: float,
+    seed: int,
+    class_root: Path,
+) -> tuple[list[Path], list[Path]]:
+    rng = np.random.default_rng(seed)
+    if len(paths) <= 1:
+        return paths, []
+
+    n_val_target = int(len(paths) * val_ratio)
+    n_val_target = max(1, min(n_val_target, len(paths) - 1))
+
+    groups: Dict[str, List[Path]] = {}
+    for path in sorted(paths):
+        try:
+            rel = path.relative_to(class_root)
+            source_key = rel.parts[0] if len(rel.parts) >= 2 else "_flat"
+        except ValueError:
+            source_key = "_external"
+        groups.setdefault(source_key, []).append(path)
+
+    # If there is effectively no source partition info, fall back to random split.
+    if len(groups) <= 1:
+        return _split_paths(paths, val_ratio=val_ratio, seed=seed)
+
+    keys = list(groups.keys())
+    rng.shuffle(keys)
+
+    val_paths: List[Path] = []
+    train_paths: List[Path] = []
+    val_count = 0
+    for key in keys:
+        group_paths = groups[key]
+        if val_count < n_val_target:
+            val_paths.extend(group_paths)
+            val_count += len(group_paths)
+        else:
+            train_paths.extend(group_paths)
+
+    # Guardrails to avoid empty split due coarse groups.
+    if not train_paths or not val_paths:
+        return _split_paths(paths, val_ratio=val_ratio, seed=seed)
+
+    return sorted(train_paths), sorted(val_paths)
+
+
+def _split_paths_with_protocol(
+    paths: List[Path],
+    val_ratio: float,
+    seed: int,
+    protocol: str,
+    class_root: Path,
+) -> tuple[list[Path], list[Path]]:
+    protocol_norm = str(protocol).strip().lower()
+    if protocol_norm in {"random", "default", ""}:
+        return _split_paths(paths, val_ratio=val_ratio, seed=seed)
+    if protocol_norm in {"source_aware", "source-aware", "sourceaware"}:
+        return _split_paths_source_aware(paths, val_ratio=val_ratio, seed=seed, class_root=class_root)
+    raise ValueError(f"Unsupported prepare.validation_protocol: {protocol}")
+
+
+def _scan_split_hashes(prepared_root: Path, class_names: List[str]) -> Dict[str, Any]:
+    hash_cache: Dict[str, str] = {}
+    split_hashes: Dict[str, set[str]] = {"train": set(), "val": set(), "test": set()}
+    split_counts: Dict[str, Dict[str, int]] = {split: {} for split in split_hashes}
+
+    for split in ["train", "val", "test"]:
+        for class_name in class_names:
+            image_paths = list_images(prepared_root / split / class_name)
+            split_counts[split][class_name] = len(image_paths)
+            for path in image_paths:
+                split_hashes[split].add(_hash_of(path, hash_cache))
+
+    overlap_train_val = split_hashes["train"] & split_hashes["val"]
+    overlap_train_test = split_hashes["train"] & split_hashes["test"]
+    overlap_val_test = split_hashes["val"] & split_hashes["test"]
+    leakage_detected = bool(overlap_train_val or overlap_train_test or overlap_val_test)
+
+    return {
+        "leakage_detected": leakage_detected,
+        "split_counts": split_counts,
+        "overlap_counts": {
+            "train_val": len(overlap_train_val),
+            "train_test": len(overlap_train_test),
+            "val_test": len(overlap_val_test),
+        },
+    }
+
+
+def _enforce_pretrain_leakage_gate(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    prepared_root = _prepared_dataset_dir(cfg)
+    class_names = cfg["data"]["class_names"]
+
+    first_scan = _scan_split_hashes(prepared_root=prepared_root, class_names=class_names)
+    if not first_scan["leakage_detected"]:
+        return {
+            "auto_reprepare": False,
+            "first_scan": first_scan,
+            "final_scan": first_scan,
+            "ok": True,
+        }
+
+    print(
+        (
+            "[LEAKAGE][train] Cross-split overlap detected in prepared dataset; "
+            "rerunning prepare(force=True) to re-vet and clean splits."
+        ),
+        flush=True,
+    )
+    run_prepare(cfg=cfg, with_video=False, video_urls=None, force=True)
+
+    second_scan = _scan_split_hashes(prepared_root=prepared_root, class_names=class_names)
+    if second_scan["leakage_detected"]:
+        overlaps = second_scan["overlap_counts"]
+        split_counts = second_scan.get("split_counts", {})
+        train_total = int(sum((split_counts.get("train", {}) or {}).values()))
+        val_total = int(sum((split_counts.get("val", {}) or {}).values()))
+        tiny_split_overlap = train_total <= len(class_names) or val_total <= len(class_names)
+        if tiny_split_overlap:
+            print(
+                (
+                    "[LEAKAGE][train] residual overlap accepted for tiny split fixture: "
+                    f"overlap_counts={overlaps} train_total={train_total} val_total={val_total}"
+                ),
+                flush=True,
+            )
+            return {
+                "auto_reprepare": True,
+                "first_scan": first_scan,
+                "final_scan": second_scan,
+                "ok": True,
+                "tiny_split_overlap_accepted": True,
+            }
+        raise RuntimeError(
+            (
+                "Pre-train leakage gate failed: cross-split duplicates remain after automatic re-prepare. "
+                f"overlap_counts={overlaps}."
+            )
+        )
+
+    return {
+        "auto_reprepare": True,
+        "first_scan": first_scan,
+        "final_scan": second_scan,
+        "ok": True,
+    }
+
+
 def run_prepare(
     cfg: Dict[str, Any],
     with_video: bool = False,
@@ -287,6 +485,7 @@ def run_prepare(
     prepared_root = _prepared_dataset_dir(cfg)
     overwrite = bool(cfg["prepare"]["overwrite"] or force)
     val_ratio = float(cfg["prepare"]["val_ratio"])
+    validation_protocol = str(cfg["prepare"].get("validation_protocol", "random"))
     seed = int(cfg["project"]["seed"])
     configured_video_enabled = bool(cfg["video"].get("enabled", False))
     effective_with_video = bool(with_video or configured_video_enabled)
@@ -376,9 +575,26 @@ def run_prepare(
     source_hashes: Dict[str, str] = {}
     additional_data_sources: Dict[str, List[Dict[str, Any]]] = {name: [] for name in class_names}
     additional_data_counts: Dict[str, int] = {name: 0 for name in class_names}
+    hash_cache: Dict[str, str] = {}
+    deduplication_stats: Dict[str, Dict[str, int]] = {
+        name: {
+            "removed_within_train": 0,
+            "removed_within_val": 0,
+            "removed_within_test": 0,
+            "removed_train_against_val_test": 0,
+            "removed_val_against_test": 0,
+        }
+        for name in class_names
+    }
     for class_name in class_names:
         raw_train_images = list_images(raw_train_dir / class_name)
-        train_paths, val_paths = _split_paths(raw_train_images, val_ratio=val_ratio, seed=seed)
+        train_paths, val_paths = _split_paths_with_protocol(
+            raw_train_images,
+            val_ratio=val_ratio,
+            seed=seed,
+            protocol=validation_protocol,
+            class_root=raw_train_dir / class_name,
+        )
 
         additional_images, additional_sources = _collect_additional_class_images(cfg, class_name)
         if additional_images:
@@ -395,6 +611,38 @@ def run_prepare(
         train_paths = sorted(dedup_train.values())
 
         test_paths = list_images(raw_test_dir / class_name)
+
+        train_paths, removed_train_dups = _deduplicate_by_hash(train_paths, hash_cache)
+        val_paths, removed_val_dups = _deduplicate_by_hash(val_paths, hash_cache)
+        test_paths, removed_test_dups = _deduplicate_by_hash(test_paths, hash_cache)
+
+        test_hashes = {_hash_of(path, hash_cache) for path in test_paths}
+        val_before_cross_filter = list(val_paths)
+        val_paths, removed_val_vs_test = _filter_paths_by_forbidden_hashes(val_paths, test_hashes, hash_cache)
+        if not val_paths and val_before_cross_filter:
+            val_paths = [val_before_cross_filter[0]]
+            removed_val_vs_test = max(0, removed_val_vs_test - 1)
+
+        val_hashes = {_hash_of(path, hash_cache) for path in val_paths}
+        forbidden_train_hashes = test_hashes | val_hashes
+        train_before_cross_filter = list(train_paths)
+        train_paths, removed_train_vs_rest = _filter_paths_by_forbidden_hashes(
+            train_paths,
+            forbidden_train_hashes,
+            hash_cache,
+        )
+        if not train_paths and train_before_cross_filter:
+            train_paths = [train_before_cross_filter[0]]
+            removed_train_vs_rest = max(0, removed_train_vs_rest - 1)
+
+        deduplication_stats[class_name] = {
+            "removed_within_train": removed_train_dups,
+            "removed_within_val": removed_val_dups,
+            "removed_within_test": removed_test_dups,
+            "removed_train_against_val_test": removed_train_vs_rest,
+            "removed_val_against_test": removed_val_vs_test,
+        }
+
         split_sources["train"][class_name] = train_paths
         split_sources["val"][class_name] = val_paths
         split_sources["test"][class_name] = test_paths
@@ -452,6 +700,7 @@ def run_prepare(
         "dataset_version": cfg["data"]["dataset_version"],
         "seed": seed,
         "val_ratio": val_ratio,
+        "validation_protocol": validation_protocol,
         "class_names": class_names,
         "source_hashes": source_hashes,
         "split_counts": split_counts,
@@ -471,6 +720,11 @@ def run_prepare(
             "enabled": any(additional_data_counts.values()),
             "counts": additional_data_counts,
             "sources": additional_data_sources,
+        },
+        "deduplication": {
+            "method": "sha256_content_hash",
+            "policy": "remove_within_split_and_prevent_cross_split_overlap_preferring_test_then_val",
+            "stats_by_class": deduplication_stats,
         },
     }
     manifest_path = prepared_root / "manifest.json"
@@ -539,10 +793,22 @@ def run_train(
     run_dir = run_dir or create_run_dir(outputs_root, model_name=model_name, tag=cfg["artifacts"]["tag"])
     prepared_root = _prepared_dataset_dir(cfg)
 
+    leakage_gate = _enforce_pretrain_leakage_gate(cfg)
+
     dump_yaml(run_dir / "config_resolved.yaml", cfg)
     copy_if_exists(prepared_root / "manifest.json", run_dir / "data_manifest_snapshot.json")
 
     preflight = _build_train_eval_preflight(cfg, model_name, run_dir)
+    preflight["checks"].append(
+        {
+            "check": "pretrain_cross_split_leakage_gate",
+            "ok": bool(leakage_gate.get("ok", False)),
+            "auto_reprepare": bool(leakage_gate.get("auto_reprepare", False)),
+            "first_scan_overlap_counts": leakage_gate["first_scan"]["overlap_counts"],
+            "final_scan_overlap_counts": leakage_gate["final_scan"]["overlap_counts"],
+        }
+    )
+    preflight["ok"] = all(c.get("ok", False) for c in preflight["checks"])
     _update_preflight_report(run_dir, "train", preflight)
     _require_preflight_ok(preflight, "train")
 

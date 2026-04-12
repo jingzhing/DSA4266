@@ -8,11 +8,25 @@ from typing import Any, Dict, List, Sequence, Tuple
 import numpy as np
 from PIL import Image
 
-from pipeline.metrics import compute_binary_metrics, find_best_threshold, sigmoid
+from pipeline.metrics import (
+    classwise_recalls_from_counts,
+    compute_binary_metrics,
+    confusion_counts,
+    find_best_threshold,
+    find_threshold_max_real_recall,
+    pr_auc_fake_and_real,
+    sigmoid,
+)
 
 
 def _binary_label_from_class_idx(class_idx: np.ndarray, fake_idx: int) -> np.ndarray:
     return (class_idx.astype(int) == int(fake_idx)).astype(int)
+
+
+def _resolve_fake_idx_from_class_to_idx(class_to_idx: Dict[str, int], context: str) -> int:
+    if "fake" not in class_to_idx:
+        raise RuntimeError(f"Missing 'fake' class in {context} class_to_idx: {class_to_idx}")
+    return int(class_to_idx["fake"])
 
 
 def _load_image_paths_for_inference(input_dir: Path) -> List[Path]:
@@ -53,6 +67,58 @@ def _autocast_context(torch_module: Any, enabled: bool):
     if amp_module is not None and hasattr(amp_module, "autocast"):
         return amp_module.autocast(device_type="cuda", enabled=enabled)
     return torch_module.cuda.amp.autocast(enabled=enabled)
+
+
+def _robust_train_transform(transforms_module: Any, img_size: int):
+    return transforms_module.Compose(
+        [
+            transforms_module.RandomResizedCrop(img_size, scale=(0.75, 1.0)),
+            transforms_module.RandomHorizontalFlip(p=0.5),
+            transforms_module.RandomApply([transforms_module.GaussianBlur(kernel_size=5, sigma=(0.1, 1.5))], p=0.3),
+            transforms_module.RandomApply([transforms_module.ColorJitter(0.2, 0.2, 0.2, 0.1)], p=0.35),
+            transforms_module.RandomApply([transforms_module.RandomAdjustSharpness(sharpness_factor=1.8)], p=0.2),
+            transforms_module.ToTensor(),
+            transforms_module.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ]
+    )
+
+
+def _build_weighted_sampler(torch_module: Any, sample_weights: np.ndarray):
+    weights = torch_module.as_tensor(sample_weights, dtype=torch_module.double)
+    return torch_module.utils.data.WeightedRandomSampler(
+        weights=weights,
+        num_samples=len(sample_weights),
+        replacement=True,
+    )
+
+
+def _fit_temperature_scaler(
+    logits: np.ndarray,
+    labels: np.ndarray,
+    max_steps: int = 200,
+    lr: float = 0.05,
+) -> float:
+    import torch
+
+    if logits.size == 0:
+        return 1.0
+
+    logits_t = torch.tensor(logits, dtype=torch.float32)
+    labels_t = torch.tensor(labels, dtype=torch.float32)
+    log_temp = torch.nn.Parameter(torch.zeros(1, dtype=torch.float32))
+    optimizer = torch.optim.Adam([log_temp], lr=float(lr))
+    loss_fn = torch.nn.BCEWithLogitsLoss()
+
+    for _ in range(max(1, int(max_steps))):
+        optimizer.zero_grad(set_to_none=True)
+        temperature = torch.exp(log_temp).clamp(min=1e-3, max=100.0)
+        scaled_logits = logits_t / temperature
+        loss = loss_fn(scaled_logits, labels_t)
+        loss.backward()
+        optimizer.step()
+
+    temperature = float(torch.exp(log_temp.detach()).cpu().item())
+    return float(np.clip(temperature, 1e-3, 100.0))
 
 
 def train_model(model_name: str, cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict[str, Any]:
@@ -98,8 +164,6 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
 
     train_dir = prepared_root / "train"
     val_dir = prepared_root / "val"
-    class_names = cfg["data"]["class_names"]
-    fake_idx = class_names.index("fake")
     swin_opt = _cfg_get(cfg, ["training", "optimization", "swin"], {})
     dataloader_opt = _cfg_get(cfg, ["training", "optimization", "dataloader"], {})
 
@@ -110,8 +174,13 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
 
     mean = (0.485, 0.456, 0.406)
     std = (0.229, 0.224, 0.225)
-    # Runtime augmentation is optional; disk-based augmentation is canonical by default.
-    if bool(cfg.get("training", {}).get("runtime_augmentation", False)):
+    advanced_cfg = _cfg_get(cfg, ["training", "advanced"], {})
+    robust_aug_cfg = _cfg_get(cfg, ["training", "advanced", "robust_augmentation"], {})
+    use_robust_aug = bool(robust_aug_cfg.get("enabled", False))
+
+    if use_robust_aug:
+        train_tf = _robust_train_transform(transforms, int(model_cfg["img_size"]))
+    elif bool(cfg.get("training", {}).get("runtime_augmentation", False)):
         train_tf = transforms.Compose(
             [
                 transforms.RandomResizedCrop(model_cfg["img_size"], scale=(0.8, 1.0)),
@@ -137,7 +206,19 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
     )
 
     train_ds = ImageFolder(str(train_dir), transform=train_tf)
+    train_eval_ds = ImageFolder(str(train_dir), transform=eval_tf)
     val_ds = ImageFolder(str(val_dir), transform=eval_tf)
+    class_names = list(train_ds.classes)
+    fake_idx = _resolve_fake_idx_from_class_to_idx(train_ds.class_to_idx, context="train")
+    val_fake_idx = _resolve_fake_idx_from_class_to_idx(val_ds.class_to_idx, context="val")
+    if fake_idx != val_fake_idx:
+        raise RuntimeError(
+            (
+                "Inconsistent fake class index between train and val splits: "
+                f"train={fake_idx}, val={val_fake_idx}. "
+                f"train_class_to_idx={train_ds.class_to_idx}, val_class_to_idx={val_ds.class_to_idx}"
+            )
+        )
 
     num_workers = int(model_cfg["num_workers"])
     pin_memory = _resolve_flag(dataloader_opt.get("pin_memory", "auto"), auto_value=(device == "cuda"))
@@ -151,16 +232,46 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
         loader_kwargs["persistent_workers"] = persistent_workers
         loader_kwargs["prefetch_factor"] = prefetch_factor
 
-    train_loader = DataLoader(
-        train_ds,
+    hard_neg_cfg = _cfg_get(cfg, ["training", "advanced", "hard_negative_mining"], {})
+    hard_neg_enabled = bool(hard_neg_cfg.get("enabled", False))
+    hard_neg_top_k = max(1, int(hard_neg_cfg.get("top_k", 2048)))
+    hard_neg_weight_multiplier = float(hard_neg_cfg.get("real_weight_multiplier", 3.0))
+    hard_neg_min_epoch = max(1, int(hard_neg_cfg.get("min_epoch_to_start", 2)))
+    hard_neg_update_every = max(1, int(hard_neg_cfg.get("update_every_epochs", 1)))
+    sample_weights = np.ones(len(train_ds), dtype=np.float64)
+
+    def _make_train_loader() -> Any:
+        if hard_neg_enabled:
+            sampler = _build_weighted_sampler(torch, sample_weights)
+            return DataLoader(
+                train_ds,
+                batch_size=model_cfg["batch_size"],
+                shuffle=False,
+                sampler=sampler,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                **loader_kwargs,
+            )
+        return DataLoader(
+            train_ds,
+            batch_size=model_cfg["batch_size"],
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            **loader_kwargs,
+        )
+
+    train_loader = _make_train_loader()
+    val_loader = DataLoader(
+        val_ds,
         batch_size=model_cfg["batch_size"],
-        shuffle=True,
+        shuffle=False,
         num_workers=num_workers,
         pin_memory=pin_memory,
         **loader_kwargs,
     )
-    val_loader = DataLoader(
-        val_ds,
+    train_eval_loader = DataLoader(
+        train_eval_ds,
         batch_size=model_cfg["batch_size"],
         shuffle=False,
         num_workers=num_workers,
@@ -196,10 +307,17 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
     batch_log_every_n_steps = max(1, int(batch_log_cfg.get("every_n_steps", 1)))
     batch_log_interval_seconds = max(0.0, float(batch_log_cfg.get("interval_seconds", 1.0)))
 
+    constrained_cfg = _cfg_get(cfg, ["training", "advanced", "selection"], {})
+    constrained_enabled = bool(constrained_cfg.get("enabled", False))
+    min_fake_recall = float(constrained_cfg.get("min_fake_recall", 0.95))
+
     best_val_score = -1.0
     best_threshold = float(cfg["training"]["default_threshold"])
     best_auc = float("nan")
     best_epoch = -1
+    best_real_recall = -1.0
+    best_fake_recall = -1.0
+    best_feasible = False
     checkpoint_path = run_dir / "model_checkpoint.pt"
     history: List[Dict[str, Any]] = []
     print(
@@ -302,8 +420,26 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
         y_raw = np.concatenate(val_y_raw).astype(int)
         y_bin = _binary_label_from_class_idx(y_raw, fake_idx=fake_idx)
         probs = sigmoid(np.concatenate(val_logits))
-        threshold, score = find_best_threshold(y_bin, probs)
+        if constrained_enabled:
+            threshold, constrained_payload = find_threshold_max_real_recall(
+                y_true=y_bin,
+                probs_fake=probs,
+                min_fake_recall=min_fake_recall,
+            )
+            score = float(constrained_payload["balanced_accuracy"])
+            feasible = bool(constrained_payload["feasible"] >= 0.5)
+            current_real_recall = float(constrained_payload["real_recall"])
+            current_fake_recall = float(constrained_payload["fake_recall"])
+        else:
+            threshold, score = find_best_threshold(y_bin, probs)
+            counts_tmp = confusion_counts(y_bin, probs, threshold)
+            recalls_tmp = classwise_recalls_from_counts(counts_tmp)
+            feasible = True
+            current_real_recall = float(recalls_tmp["real_recall"])
+            current_fake_recall = float(recalls_tmp["fake_recall"])
+
         metrics = compute_binary_metrics(y_bin, probs, threshold)
+        pr_metrics = pr_auc_fake_and_real(y_bin, probs)
         train_loss_mean = float(np.mean(losses) if losses else float("nan"))
         current_lr = float(optimizer.param_groups[0]["lr"])
         history.append(
@@ -312,6 +448,11 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
                 "train_loss": train_loss_mean,
                 "val_balanced_accuracy": float(metrics["balanced_accuracy"]),
                 "val_roc_auc": float(metrics["roc_auc"]),
+                "val_pr_auc_fake": float(pr_metrics["pr_auc_fake"]),
+                "val_pr_auc_real": float(pr_metrics["pr_auc_real"]),
+                "val_real_recall": current_real_recall,
+                "val_fake_recall": current_fake_recall,
+                "constraint_feasible": bool(feasible),
                 "threshold": float(threshold),
                 "lr": current_lr,
             }
@@ -319,13 +460,31 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
         epoch_time_sec = float(time.perf_counter() - epoch_start)
 
         improved = False
-        if score > (best_val_score + early_stopping_min_delta):
+        if constrained_enabled:
+            improved = (
+                (feasible and not best_feasible)
+                or (
+                    feasible == best_feasible
+                    and current_real_recall > (best_real_recall + early_stopping_min_delta)
+                )
+                or (
+                    feasible == best_feasible
+                    and abs(current_real_recall - best_real_recall) <= early_stopping_min_delta
+                    and score > (best_val_score + early_stopping_min_delta)
+                )
+            )
+        else:
+            improved = score > (best_val_score + early_stopping_min_delta)
+
+        if improved:
             best_val_score = score
             best_threshold = threshold
             best_auc = metrics["roc_auc"]
             best_epoch = epoch + 1
+            best_real_recall = current_real_recall
+            best_fake_recall = current_fake_recall
+            best_feasible = feasible
             epochs_without_improvement = 0
-            improved = True
             torch.save(
                 {
                     "model_state_dict": model.state_dict(),
@@ -335,6 +494,13 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
                     "best_threshold": best_threshold,
                     "best_val_balanced_accuracy": best_val_score,
                     "best_val_auc": best_auc,
+                    "selection": {
+                        "constrained_enabled": constrained_enabled,
+                        "min_fake_recall": min_fake_recall,
+                        "best_real_recall": best_real_recall,
+                        "best_fake_recall": best_fake_recall,
+                        "best_feasible": best_feasible,
+                    },
                 },
                 checkpoint_path,
             )
@@ -350,6 +516,8 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
                 f"loss={train_loss_mean:.6f} "
                 f"val_bal_acc={float(metrics['balanced_accuracy']):.6f} "
                 f"val_auc={float(metrics['roc_auc']):.6f} "
+                f"val_real_recall={current_real_recall:.6f} "
+                f"val_fake_recall={current_fake_recall:.6f} "
                 f"threshold={float(threshold):.4f} "
                 f"lr={current_lr:.8f} "
                 f"improved={improved} "
@@ -357,6 +525,42 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
             ),
             flush=True,
         )
+
+        if (
+            hard_neg_enabled
+            and (epoch + 1) >= hard_neg_min_epoch
+            and ((epoch + 1 - hard_neg_min_epoch) % hard_neg_update_every == 0)
+        ):
+            train_logits: List[np.ndarray] = []
+            train_y_raw: List[np.ndarray] = []
+            model.eval()
+            with torch.no_grad():
+                for x_eval, y_eval in train_eval_loader:
+                    x_eval = x_eval.to(device, non_blocking=True)
+                    logits_eval = model(x_eval).squeeze(1).detach().cpu().numpy()
+                    train_logits.append(logits_eval)
+                    train_y_raw.append(y_eval.numpy())
+
+            train_probs = sigmoid(np.concatenate(train_logits))
+            train_raw_idx = np.concatenate(train_y_raw).astype(int)
+            is_real = (train_raw_idx != fake_idx)
+            real_indices = np.where(is_real)[0]
+            if real_indices.size > 0:
+                real_probs = train_probs[real_indices]
+                n_pick = min(int(hard_neg_top_k), int(real_indices.size))
+                hardest_pos = np.argsort(-real_probs)[:n_pick]
+                hard_real_indices = real_indices[hardest_pos]
+                sample_weights[:] = 1.0
+                sample_weights[hard_real_indices] = float(hard_neg_weight_multiplier)
+                train_loader = _make_train_loader()
+                print(
+                    (
+                        f"[SWIN][hard-negative] epoch={epoch + 1} "
+                        f"selected_real={len(hard_real_indices)} "
+                        f"weight_multiplier={hard_neg_weight_multiplier:.3f}"
+                    ),
+                    flush=True,
+                )
 
         if early_stopping_patience > 0 and epochs_without_improvement >= early_stopping_patience:
             print(
@@ -374,6 +578,9 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
         "best_threshold": float(best_threshold),
         "best_val_balanced_accuracy": float(best_val_score),
         "best_val_auc": float(best_auc),
+        "best_val_real_recall": float(best_real_recall),
+        "best_val_fake_recall": float(best_fake_recall),
+        "selection_constraint_feasible": bool(best_feasible),
         "best_epoch": int(best_epoch),
         "epochs_ran": len(history),
         "optimizer": {
@@ -383,6 +590,22 @@ def _train_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> Dict
             "max_grad_norm": max_grad_norm,
             "weight_decay": weight_decay,
             "amp": use_amp,
+        },
+        "advanced": {
+            "selection": {
+                "enabled": constrained_enabled,
+                "min_fake_recall": min_fake_recall,
+            },
+            "hard_negative_mining": {
+                "enabled": hard_neg_enabled,
+                "top_k": hard_neg_top_k,
+                "real_weight_multiplier": hard_neg_weight_multiplier,
+                "min_epoch_to_start": hard_neg_min_epoch,
+                "update_every_epochs": hard_neg_update_every,
+            },
+            "robust_augmentation": {
+                "enabled": use_robust_aug,
+            },
         },
         "history": history,
     }
@@ -401,7 +624,6 @@ def _evaluate_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> D
         raise RuntimeError(f"Swin checkpoint missing: {checkpoint_path}")
 
     ckpt = torch.load(checkpoint_path, map_location="cpu")
-    fake_idx = int(ckpt.get("fake_idx", cfg["data"]["class_names"].index("fake")))
     best_threshold = float(ckpt.get("best_threshold", cfg["training"]["default_threshold"]))
 
     mean = (0.485, 0.456, 0.406)
@@ -413,7 +635,28 @@ def _evaluate_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> D
             transforms.Normalize(mean, std),
         ]
     )
+    val_ds = ImageFolder(str(prepared_root / "val"), transform=test_tf)
     test_ds = ImageFolder(str(prepared_root / "test"), transform=test_tf)
+    fake_idx = _resolve_fake_idx_from_class_to_idx(test_ds.class_to_idx, context="test")
+    val_fake_idx = _resolve_fake_idx_from_class_to_idx(val_ds.class_to_idx, context="val")
+    if val_fake_idx != fake_idx:
+        raise RuntimeError(
+            (
+                "Inconsistent fake class index between val and test splits for evaluation: "
+                f"val={val_fake_idx}, test={fake_idx}. "
+                f"val_class_to_idx={val_ds.class_to_idx}, test_class_to_idx={test_ds.class_to_idx}"
+            )
+        )
+    ckpt_fake_idx = ckpt.get("fake_idx", None)
+    if ckpt_fake_idx is not None and int(ckpt_fake_idx) != fake_idx:
+        print(
+            (
+                "[SWIN][eval] checkpoint fake_idx differs from dataset class mapping; "
+                f"using dataset mapping fake_idx={fake_idx} "
+                f"(ckpt_fake_idx={int(ckpt_fake_idx)})."
+            ),
+            flush=True,
+        )
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dataloader_opt = _cfg_get(cfg, ["training", "optimization", "dataloader"], {})
     num_workers = int(model_cfg["num_workers"])
@@ -428,6 +671,14 @@ def _evaluate_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> D
         loader_kwargs["persistent_workers"] = persistent_workers
         loader_kwargs["prefetch_factor"] = prefetch_factor
 
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=model_cfg["batch_size"],
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        **loader_kwargs,
+    )
     test_loader = DataLoader(
         test_ds,
         batch_size=model_cfg["batch_size"],
@@ -441,32 +692,87 @@ def _evaluate_swin(cfg: Dict[str, Any], prepared_root: Path, run_dir: Path) -> D
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
-    all_logits: List[np.ndarray] = []
-    all_y_raw: List[np.ndarray] = []
+    val_logits: List[np.ndarray] = []
+    val_y_raw: List[np.ndarray] = []
+    test_logits: List[np.ndarray] = []
+    test_y_raw: List[np.ndarray] = []
     with torch.no_grad():
+        for x, y in val_loader:
+            x = x.to(device, non_blocking=True)
+            logits = model(x).squeeze(1).detach().cpu().numpy()
+            val_logits.append(logits)
+            val_y_raw.append(y.numpy())
         for x, y in test_loader:
             x = x.to(device, non_blocking=True)
             logits = model(x).squeeze(1).detach().cpu().numpy()
-            all_logits.append(logits)
-            all_y_raw.append(y.numpy())
+            test_logits.append(logits)
+            test_y_raw.append(y.numpy())
 
-    y_raw = np.concatenate(all_y_raw).astype(int)
-    y_bin = _binary_label_from_class_idx(y_raw, fake_idx=fake_idx)
-    probs = sigmoid(np.concatenate(all_logits))
-    metrics = compute_binary_metrics(y_bin, probs, best_threshold)
+    val_raw = np.concatenate(val_y_raw).astype(int)
+    val_y_bin = _binary_label_from_class_idx(val_raw, fake_idx=fake_idx)
+    val_logits_np = np.concatenate(val_logits)
+
+    eval_adv_cfg = _cfg_get(cfg, ["training", "advanced", "evaluation"], {})
+    calibration_cfg = _cfg_get(cfg, ["training", "advanced", "calibration"], {})
+    constrained_cfg = _cfg_get(cfg, ["training", "advanced", "selection"], {})
+    calibration_enabled = bool(calibration_cfg.get("enabled", False))
+    constrained_enabled = bool(constrained_cfg.get("enabled", False))
+    min_fake_recall = float(constrained_cfg.get("min_fake_recall", 0.95))
+
+    temperature = 1.0
+    if calibration_enabled:
+        temperature = _fit_temperature_scaler(
+            logits=val_logits_np,
+            labels=val_y_bin,
+            max_steps=int(calibration_cfg.get("max_steps", 200)),
+            lr=float(calibration_cfg.get("lr", 0.05)),
+        )
+
+    val_probs = sigmoid(val_logits_np / float(temperature))
+    if constrained_enabled:
+        threshold, threshold_payload = find_threshold_max_real_recall(
+            y_true=val_y_bin,
+            probs_fake=val_probs,
+            min_fake_recall=min_fake_recall,
+        )
+    else:
+        threshold, _ = find_best_threshold(val_y_bin, val_probs)
+        counts_tmp = confusion_counts(val_y_bin, val_probs, threshold)
+        recalls_tmp = classwise_recalls_from_counts(counts_tmp)
+        threshold_payload = {
+            "fake_recall": float(recalls_tmp["fake_recall"]),
+            "real_recall": float(recalls_tmp["real_recall"]),
+            "balanced_accuracy": float(0.5 * (recalls_tmp["fake_recall"] + recalls_tmp["real_recall"])),
+            "feasible": 1.0,
+        }
+
+    if bool(eval_adv_cfg.get("prefer_checkpoint_threshold", False)):
+        threshold = best_threshold
+
+    test_raw = np.concatenate(test_y_raw).astype(int)
+    y_bin = _binary_label_from_class_idx(test_raw, fake_idx=fake_idx)
+    probs = sigmoid(np.concatenate(test_logits) / float(temperature))
+    metrics = compute_binary_metrics(y_bin, probs, threshold)
+    metrics["temperature"] = float(temperature)
+    metrics["val_selected_threshold"] = float(threshold)
+    metrics["val_constraint_fake_recall"] = float(threshold_payload["fake_recall"])
+    metrics["val_constraint_real_recall"] = float(threshold_payload["real_recall"])
+    metrics["val_constraint_balanced_accuracy"] = float(threshold_payload["balanced_accuracy"])
+    metrics["val_constraint_feasible"] = bool(threshold_payload["feasible"] >= 0.5)
+    metrics.update(pr_auc_fake_and_real(y_bin, probs))
 
     samples = test_ds.samples
     predictions: List[Dict[str, Any]] = []
     for i, (path, class_idx) in enumerate(samples):
         prob = float(probs[i])
-        pred = int(prob >= best_threshold)
+        pred = int(prob >= threshold)
         predictions.append(
             {
                 "path": str(path),
                 "true_label": int(class_idx == fake_idx),
                 "prob_fake": prob,
                 "pred_label": pred,
-                "threshold": float(best_threshold),
+                "threshold": float(threshold),
             }
         )
     return {"metrics": metrics, "predictions": predictions}
@@ -500,6 +806,17 @@ def _infer_swin(cfg: Dict[str, Any], run_dir: Path, input_dir: Path) -> List[Dic
         raise RuntimeError(f"Swin checkpoint missing: {checkpoint_path}")
     ckpt = torch.load(checkpoint_path, map_location="cpu")
     threshold = float(ckpt.get("best_threshold", cfg["training"]["default_threshold"]))
+    temperature = 1.0
+    metrics_path = run_dir / "metrics.json"
+    if metrics_path.exists():
+        try:
+            metrics_payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+            if "val_selected_threshold" in metrics_payload:
+                threshold = float(metrics_payload["val_selected_threshold"])
+            if "temperature" in metrics_payload:
+                temperature = float(metrics_payload["temperature"])
+        except Exception:
+            pass
 
     mean = (0.485, 0.456, 0.406)
     std = (0.229, 0.224, 0.225)
@@ -532,7 +849,7 @@ def _infer_swin(cfg: Dict[str, Any], run_dir: Path, input_dir: Path) -> List[Dic
         for images, paths in loader:
             images = images.to(device, non_blocking=True)
             logits = model(images).squeeze(1).detach().cpu().numpy()
-            probs = sigmoid(logits)
+            probs = sigmoid(logits / float(temperature))
             for path, prob in zip(paths, probs):
                 pred = int(prob >= threshold)
                 rows.append(
@@ -541,6 +858,7 @@ def _infer_swin(cfg: Dict[str, Any], run_dir: Path, input_dir: Path) -> List[Dic
                         "prob_fake": float(prob),
                         "pred_label": pred,
                         "threshold": float(threshold),
+                        "temperature": float(temperature),
                     }
                 )
     return rows

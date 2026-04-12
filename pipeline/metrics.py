@@ -6,6 +6,7 @@ from typing import Dict, Iterable, Tuple
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     confusion_matrix,
     f1_score,
     precision_score,
@@ -41,6 +42,90 @@ def find_best_threshold(y_true: np.ndarray, probs: np.ndarray) -> Tuple[float, f
             best_score = float(score)
             best_t = float(threshold)
     return best_t, best_score
+
+
+def _threshold_grid() -> np.ndarray:
+    return np.linspace(0.05, 0.95, 19)
+
+
+def confusion_counts(y_true: np.ndarray, probs_fake: np.ndarray, threshold: float) -> Dict[str, int]:
+    pred = (probs_fake >= threshold).astype(int)
+    tn = int(np.sum((y_true == 0) & (pred == 0)))
+    fp = int(np.sum((y_true == 0) & (pred == 1)))
+    fn = int(np.sum((y_true == 1) & (pred == 0)))
+    tp = int(np.sum((y_true == 1) & (pred == 1)))
+    return {"tn": tn, "fp": fp, "fn": fn, "tp": tp}
+
+
+def classwise_recalls_from_counts(counts: Dict[str, int]) -> Dict[str, float]:
+    tp = int(counts["tp"])
+    fn = int(counts["fn"])
+    tn = int(counts["tn"])
+    fp = int(counts["fp"])
+    fake_recall = tp / (tp + fn + 1e-12)
+    real_recall = tn / (tn + fp + 1e-12)
+    return {
+        "fake_recall": float(fake_recall),
+        "real_recall": float(real_recall),
+    }
+
+
+def find_threshold_max_real_recall(
+    y_true: np.ndarray,
+    probs_fake: np.ndarray,
+    min_fake_recall: float,
+    thresholds: np.ndarray | None = None,
+) -> Tuple[float, Dict[str, float]]:
+    candidate_thresholds = thresholds if thresholds is not None else _threshold_grid()
+    best_threshold = 0.5
+    best_payload: Dict[str, float] = {
+        "fake_recall": 0.0,
+        "real_recall": 0.0,
+        "balanced_accuracy": 0.0,
+        "feasible": 0.0,
+    }
+
+    for threshold in candidate_thresholds:
+        counts = confusion_counts(y_true, probs_fake, float(threshold))
+        recalls = classwise_recalls_from_counts(counts)
+        bal = 0.5 * (recalls["fake_recall"] + recalls["real_recall"])
+        feasible = 1.0 if recalls["fake_recall"] >= float(min_fake_recall) else 0.0
+        payload = {
+            "fake_recall": float(recalls["fake_recall"]),
+            "real_recall": float(recalls["real_recall"]),
+            "balanced_accuracy": float(bal),
+            "feasible": float(feasible),
+        }
+        is_better = (
+            payload["feasible"] > best_payload["feasible"]
+            or (
+                payload["feasible"] == best_payload["feasible"]
+                and payload["real_recall"] > best_payload["real_recall"]
+            )
+            or (
+                payload["feasible"] == best_payload["feasible"]
+                and payload["real_recall"] == best_payload["real_recall"]
+                and payload["balanced_accuracy"] > best_payload["balanced_accuracy"]
+            )
+        )
+        if is_better:
+            best_threshold = float(threshold)
+            best_payload = payload
+
+    return best_threshold, best_payload
+
+
+def pr_auc_fake_and_real(y_true: np.ndarray, probs_fake: np.ndarray) -> Dict[str, float]:
+    out: Dict[str, float] = {"pr_auc_fake": float("nan"), "pr_auc_real": float("nan")}
+    try:
+        out["pr_auc_fake"] = float(average_precision_score(y_true, probs_fake))
+    except Exception:
+        pass
+    try:
+        out["pr_auc_real"] = float(average_precision_score(1 - y_true, 1.0 - probs_fake))
+    except Exception:
+        pass
+    return out
 
 
 def compute_binary_metrics(
