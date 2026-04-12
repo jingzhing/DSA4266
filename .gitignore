@@ -1,9 +1,13 @@
 .venv/
 __pycache__/
 *.pyc
-outputs/
 data/
-models/**/checkpoints/
-models/**/runs/
+data/raw/
+data/processed/
 .ipynb_checkpoints/
 .DS_Store
+*.npz
+*.parquet
+.pytest_cache/
+# Keep run artifacts, but exclude large checkpoints
+**/model_checkpoint.pt

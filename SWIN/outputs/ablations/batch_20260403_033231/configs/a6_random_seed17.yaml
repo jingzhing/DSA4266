@@ -1,0 +1,56 @@
+project:
+  seed: 17
+data:
+  dataset_version: deepdetect-2025
+  skip_download: true
+models:
+  swin:
+    model_name: swin_tiny_patch4_window7_224
+    img_size: 224
+    batch_size: 16
+    epochs: 8
+    lr: 0.0001
+    num_workers: 12
+training:
+  runtime_augmentation: false
+  advanced:
+    selection:
+      enabled: true
+      min_fake_recall: 0.95
+    hard_negative_mining:
+      enabled: true
+      top_k: 4000
+      real_weight_multiplier: 4.0
+      min_epoch_to_start: 2
+      update_every_epochs: 1
+    robust_augmentation:
+      enabled: true
+    calibration:
+      enabled: true
+      max_steps: 250
+      lr: 0.03
+    evaluation:
+      prefer_checkpoint_threshold: false
+  optimization:
+    dataloader:
+      pin_memory: false
+      persistent_workers: true
+      prefetch_factor: 4
+    swin:
+      gradient_accumulation_steps: 2
+      max_grad_norm: 1.0
+      weight_decay: 0.01
+      scheduler: cosine
+      warmup_epochs: 1
+      min_lr: 1.0e-06
+      early_stopping_patience: 2
+      early_stopping_min_delta: 0.0
+      amp: false
+      num_threads: 16
+artifacts:
+  tag: full_swin_gen_v2
+  overwrite: false
+inference:
+  default_input: data/prepared/deepdetect-2025/test
+prepare:
+  validation_protocol: random

@@ -1,0 +1,80 @@
+{
+  "dataset_version": "deepdetect-2025",
+  "seed": 23,
+  "val_ratio": 0.1,
+  "validation_protocol": "source_aware",
+  "class_names": [
+    "real",
+    "fake"
+  ],
+  "source_hashes": {
+    "real": "f97348d4a9b466a2a6d1d96de4fcd45f8bb89a268e4092357ab10140a1cb52cf",
+    "fake": "7534350d829b47fafb890c9c4fe0c3919477b7e007238df28a247bbd12972edb"
+  },
+  "split_counts": {
+    "train": {
+      "real": 43934,
+      "fake": 46785
+    },
+    "val": {
+      "real": 4881,
+      "fake": 4159
+    },
+    "test": {
+      "real": 11178,
+      "fake": 10399
+    }
+  },
+  "video_enrichment": {
+    "enabled": false,
+    "urls": [],
+    "frame_count_available": 0,
+    "stats": []
+  },
+  "augmentation": {
+    "enabled": true,
+    "target_class": "fake",
+    "generated_count": 9357,
+    "probabilities": {
+      "hflip": 0.5,
+      "vflip": 0.1,
+      "gaussian_blur": 0.25,
+      "random_erase": 0.2,
+      "rotate": 0.2,
+      "brightness_contrast": 0.3,
+      "gaussian_noise": 0.15,
+      "jpeg_compression": 0.15
+    }
+  },
+  "additional_data": {
+    "enabled": false,
+    "counts": {
+      "real": 0,
+      "fake": 0
+    },
+    "sources": {
+      "real": [],
+      "fake": []
+    }
+  },
+  "deduplication": {
+    "method": "sha256_content_hash",
+    "policy": "remove_within_split_and_prevent_cross_split_overlap_preferring_test_then_val",
+    "stats_by_class": {
+      "real": {
+        "removed_within_train": 0,
+        "removed_within_val": 0,
+        "removed_within_test": 199,
+        "removed_train_against_val_test": 0,
+        "removed_val_against_test": 0
+      },
+      "fake": {
+        "removed_within_train": 2,
+        "removed_within_val": 0,
+        "removed_within_test": 0,
+        "removed_train_against_val_test": 5,
+        "removed_val_against_test": 0
+      }
+    }
+  }
+}

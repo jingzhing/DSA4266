@@ -1,0 +1,26 @@
+{
+  "config": "/home/ubuntu/work/DSA4266/.ablation_configs/batch_20260410_151834_a6_source_aware_seed23.yaml",
+  "model": "swin",
+  "seeds": [],
+  "quality_thresholds": {
+    "min_real_recall": 0.3,
+    "min_fake_recall": 0.95,
+    "max_ece": 0.15
+  },
+  "runs": [
+    {
+      "seed": null,
+      "config": "/home/ubuntu/work/DSA4266/.ablation_configs/batch_20260410_151834_a6_source_aware_seed23.yaml",
+      "run_dir": "/home/ubuntu/work/DSA4266/outputs/runs/20260411_003336_swin_full_swin_gen_v2",
+      "quality_gate": {
+        "passed": true,
+        "real_recall": 0.7334943639291465,
+        "fake_recall": 0.9913453216655446,
+        "ece": 0.13993025987193128,
+        "balanced_accuracy": 0.8624198427973455,
+        "roc_auc": 0.9829482869505994
+      },
+      "failure_diagnosis": {}
+    }
+  ]
+}
