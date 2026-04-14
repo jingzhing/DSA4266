@@ -1,0 +1,29 @@
+Run started: 2026-04-14 01:57:25
+Logging to: outputs\swin_v2\logs\train.log
+
+========================================================================
+TRAIN swin_tiny_v2
+========================================================================
+
+========================================================================
+DATA SUMMARY
+========================================================================
+Device: cuda
+Classes: ['fake', 'real']
+Mapping: {'fake': 0, 'real': 1}
+Train split size: 81359
+Val split size: 9040
+Test size: 21766
+Model config: {'arch': 'swin_tiny_patch4_window7_224', 'img_size': 224, 'dropout': 0.2, 'drop_path_rate': 0.2, 'freeze_backbone': False}
+Train config: {'epochs': 1, 'lr': 0.0001, 'weight_decay': 5e-05, 'label_smoothing': 0.05, 'optimizer': 'adamw', 'early_stopping_patience': 3, 'early_stopping_min_delta': 0.0005, 'scheduler': None}
+Diagnostics config: {'eval_test_each_epoch': True, 'save_top_mistakes': 50}
+epoch=1 train_loss=0.2469 val_auc=0.9998 val_bal_acc_0.5=0.9935 val_bal_acc_best=0.9935 best_t=0.49 time=411.0s
+Validation AUC=0.9998 | bal_acc@0.5=0.9935 | bal_acc@best=0.9935 | best_t=0.49
+Validation true counts: [4881 4159] | pred@0.5: [4881 4159] | pred@best: [4881 4159]
+Validation prob means | real=0.0343 fake=0.9680 gap=0.9337
+Test AUC=0.9905 | bal_acc@0.5=0.9140 | bal_acc@best=0.9582 | best_t=0.92
+Test true counts: [11372 10394] | pred@0.5: [ 9581 12185] | pred@best: [11346 10420]
+Test prob means | real=0.2106 fake=0.9685 gap=0.7579
+Validation-Test gap at searched thresholds: 0.0354
+Saved best checkpoint: models/swin/v2/checkpoints\best.pt
+Saved training summary: outputs/swin_v2\train_summary.json

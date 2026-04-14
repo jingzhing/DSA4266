@@ -1,8 +1,10 @@
+import json
+import os
 import random
 import numpy as np
 import torch
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
@@ -89,6 +91,59 @@ def build_eval_transform(img_size):
     ])
 
 
+def stratified_split_indices(targets, val_ratio, seed):
+    targets = np.asarray(targets)
+    rng = np.random.default_rng(seed)
+
+    train_indices = []
+    val_indices = []
+
+    for cls in np.unique(targets):
+        cls_indices = np.where(targets == cls)[0]
+        rng.shuffle(cls_indices)
+        n_val_cls = max(1, int(round(len(cls_indices) * val_ratio)))
+        val_cls = cls_indices[:n_val_cls]
+        train_cls = cls_indices[n_val_cls:]
+        train_indices.extend(train_cls.tolist())
+        val_indices.extend(val_cls.tolist())
+
+    rng.shuffle(train_indices)
+    rng.shuffle(val_indices)
+    return train_indices, val_indices
+
+
+def load_or_create_fixed_split(full_ds, cfg):
+    split_path = cfg.get("val_split_path")
+    if split_path is None:
+        return stratified_split_indices(full_ds.targets, cfg["val_ratio"], cfg["seed"])
+
+    os.makedirs(os.path.dirname(split_path), exist_ok=True)
+
+    if os.path.exists(split_path):
+        with open(split_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        train_indices = payload["train_indices"]
+        val_indices = payload["val_indices"]
+        if len(train_indices) + len(val_indices) != len(full_ds):
+            raise RuntimeError("Saved validation split does not match current dataset size")
+        return train_indices, val_indices
+
+    train_indices, val_indices = stratified_split_indices(full_ds.targets, cfg["val_ratio"], cfg["seed"])
+    with open(split_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "seed": cfg["seed"],
+                "val_ratio": cfg["val_ratio"],
+                "dataset_size": len(full_ds),
+                "train_indices": train_indices,
+                "val_indices": val_indices,
+            },
+            f,
+            indent=2,
+        )
+    return train_indices, val_indices
+
+
 def build_dataloaders(cfg):
     eff_cfg = cfg["efficientnet"]
     swin_cfg = cfg["swin"]
@@ -100,15 +155,12 @@ def build_dataloaders(cfg):
     if "fake" not in class_to_idx or "real" not in class_to_idx:
         raise RuntimeError(f"Expected classes fake/real. Got: {classes} mapping={class_to_idx}")
 
-    n_total = len(full_ds)
-    n_val = int(n_total * cfg["val_ratio"])
-    n_train = n_total - n_val
+    train_indices, val_indices = load_or_create_fixed_split(full_ds, cfg)
 
-    base_train_ds, base_val_ds = random_split(
-        full_ds,
-        [n_train, n_val],
-        generator=torch.Generator().manual_seed(cfg["seed"]),
-    )
+    base_train_ds = Subset(full_ds, train_indices)
+    base_train_ds.indices = train_indices
+    base_val_ds = Subset(full_ds, val_indices)
+    base_val_ds.indices = val_indices
 
     train_swin_tf = build_train_transform(swin_cfg["img_size"], aug_cfg)
     train_eff_tf = build_train_transform(eff_cfg["img_size"], aug_cfg)

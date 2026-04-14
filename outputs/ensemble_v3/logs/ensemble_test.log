@@ -1,0 +1,67 @@
+Run started: 2026-04-13 15:55:08
+Logging to: outputs\ensemble_v3\logs\ensemble_test.log
+
+========================================================================
+ENSEMBLE V3 TESTING WITH MODEL COMPARISON
+========================================================================
+Device: cuda
+Loading checkpoint: models/ensemble/v3/checkpoints\best_ensemble.pt
+Processed 340/1361 test batches
+Processed 680/1361 test batches
+Processed 1020/1361 test batches
+Processed 1360/1361 test batches
+Classes: ['fake', 'real']
+Mapping: {'fake': 0, 'real': 1}
+Thresholds | Swin=0.50 EfficientNet=0.50 Base50=0.50
+Total test time (s): 58.84
+True counts (real=0,fake=1): [11377 10399] Total: 21776
+
+SWIN ONLY
+SWIN ONLY average predicted fake-probability:
+  real samples   : 0.4786
+  fake samples   : 0.9475
+  overall average: 0.7025
+  RAW @ 0.50
+    Acc=0.7426 | Balanced Acc=0.7527 | AUC=0.8438
+    Pred counts @0.50: [ 6220 15556]
+  SEARCHED @ 0.50
+    Acc=0.7426 | Balanced Acc=0.7527 | AUC=0.8438
+    Pred counts @searched: [ 6220 15556]
+
+EFFICIENTNET ONLY
+EFFICIENTNET ONLY average predicted fake-probability:
+  real samples   : 0.6228
+  fake samples   : 0.9588
+  overall average: 0.7833
+  RAW @ 0.50
+    Acc=0.6621 | Balanced Acc=0.6755 | AUC=0.7775
+    Pred counts @0.50: [ 4542 17234]
+  SEARCHED @ 0.50
+    Acc=0.6621 | Balanced Acc=0.6755 | AUC=0.7775
+    Pred counts @searched: [ 4542 17234]
+
+COMBINED 50/50
+COMBINED 50/50 average predicted fake-probability:
+  real samples   : 0.5507
+  fake samples   : 0.9532
+  overall average: 0.7429
+  RAW @ 0.50
+    Acc=0.6943 | Balanced Acc=0.7070 | AUC=0.8726
+    Pred counts @0.50: [ 4929 16847]
+  SEARCHED @ 0.50
+    Acc=0.6943 | Balanced Acc=0.7070 | AUC=0.8726
+    Pred counts @searched: [ 4929 16847]
+
+COMBINED 50/50 confusion matrix @ searched threshold
+[[ 4824  6553]
+ [  105 10294]]
+Classification Report:
+              precision    recall  f1-score   support
+
+     real(0)     0.9787    0.4240    0.5917     11377
+     fake(1)     0.6110    0.9899    0.7556     10399
+
+    accuracy                         0.6943     21776
+   macro avg     0.7949    0.7070    0.6737     21776
+weighted avg     0.8031    0.6943    0.6700     21776
+

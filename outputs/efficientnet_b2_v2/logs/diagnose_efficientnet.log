@@ -1,0 +1,11 @@
+Run started: 2026-04-13 18:29:48
+Logging to: outputs\efficientnet_b2_v2\logs\diagnose_efficientnet.log
+
+========================================================================
+DIAGNOSE efficientnet_b2_v2
+========================================================================
+Validation AUC=0.9991 | bal_acc@0.5=0.9762 | bal_acc@best=0.9867
+Test       AUC=0.9336 | bal_acc@0.5=0.6278 | bal_acc@best=0.7518
+Gap best-threshold balanced acc (val - test): 0.2349
+Mean fake prob gap | val=0.9260 | test=0.2785
+Saved diagnosis outputs to: outputs/efficientnet_b2_v2\diagnostics

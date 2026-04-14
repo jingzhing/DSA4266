@@ -1,0 +1,9 @@
+root_dir=C:\Users\jz\DSA4266\DSA4266\data\deepdetect-2025_dddata
+train_real_dir=C:\Users\jz\DSA4266\DSA4266\data\deepdetect-2025_dddata\ddata\train\real
+train_fake_dir=C:\Users\jz\DSA4266\DSA4266\data\deepdetect-2025_dddata\ddata\train\fake
+test_real_dir=C:\Users\jz\DSA4266\DSA4266\data\deepdetect-2025_dddata\ddata\test\real
+test_fake_dir=C:\Users\jz\DSA4266\DSA4266\data\deepdetect-2025_dddata\ddata\test\fake
+train_samples=72327 real=39052 fake=33275
+val_samples=18082 real=9763 fake=8319
+test_samples=21776 real=11377 fake=10399
+best_threshold=0.6500

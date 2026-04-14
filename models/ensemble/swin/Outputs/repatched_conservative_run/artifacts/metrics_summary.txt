@@ -1,0 +1,9 @@
+best_epoch=8
+best_val_loss=0.07382327138705139
+best_threshold=0.5
+test_loss=1.1489505284092225
+test_acc=0.6913115356355621
+test_bal_acc=0.7038313000647464
+roc_auc=0.8903872052524507
+average_precision=0.8577578277378487
+confusion_matrix=[[4836, 6541], [181, 10218]]

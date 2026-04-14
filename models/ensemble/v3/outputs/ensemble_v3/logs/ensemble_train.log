@@ -1,0 +1,12 @@
+Run started: 2026-04-12 13:39:51
+Logging to: outputs\ensemble_v3\logs\ensemble_train.log
+
+========================================================================
+ENSEMBLE V3 TRAINING
+========================================================================
+Device: cuda
+Base ensemble method: probability_average
+Initial ensemble weights: {'swin': 0.5, 'efficientnet': 0.5}
+Post-training weight search enabled: True
+Swin config: {'model_name': 'swin_tiny_patch4_window7_224', 'img_size': 224, 'dropout': 0.2, 'drop_path_rate': 0.2, 'lr': 0.0001, 'weight_decay': 5e-05, 'freeze_backbone': False, 'label_smoothing': 0.05}
+EfficientNet config: {'model_name': 'efficientnet_b2', 'img_size': 260, 'dropout': 0.3, 'lr': 0.0005, 'weight_decay': 0.0001, 'freeze_backbone': False, 'label_smoothing': 0.0}

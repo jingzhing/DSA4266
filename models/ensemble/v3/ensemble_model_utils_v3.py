@@ -48,9 +48,30 @@ class SwinEfficientNetEnsemble(nn.Module):
         if swin_cfg.get("freeze_backbone", False):
             for p in self.swin.backbone.parameters():
                 p.requires_grad = False
+
         if eff_cfg.get("freeze_backbone", False):
             for p in self.efficientnet.backbone.parameters():
                 p.requires_grad = False
+
+        if eff_cfg.get("partial_finetune", False):
+            for p in self.efficientnet.backbone.parameters():
+                p.requires_grad = False
+
+            if hasattr(self.efficientnet.backbone, "blocks"):
+                for block in self.efficientnet.backbone.blocks[-2:]:
+                    for p in block.parameters():
+                        p.requires_grad = True
+
+            if hasattr(self.efficientnet.backbone, "conv_head"):
+                for p in self.efficientnet.backbone.conv_head.parameters():
+                    p.requires_grad = True
+
+            if hasattr(self.efficientnet.backbone, "bn2"):
+                for p in self.efficientnet.backbone.bn2.parameters():
+                    p.requires_grad = True
+
+            for p in self.efficientnet.head.parameters():
+                p.requires_grad = True
 
     def forward(self, inputs, ensemble_weights=None):
         swin_x = inputs["swin"]

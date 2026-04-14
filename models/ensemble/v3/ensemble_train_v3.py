@@ -10,7 +10,6 @@ from ensemble_data_v3 import build_dataloaders, set_seed
 from ensemble_metrics_v3 import evaluate_predictions, find_best_threshold
 from ensemble_model_utils_v3 import build_ensemble_model, build_optimizer
 from logging_utils_v3 import init_run_logging, log_section
-from post_training_ensemble_v3 import run_post_training_weight_search
 
 
 def smooth_binary_labels(y, smoothing=0.0):
@@ -23,7 +22,59 @@ def move_inputs_to_device(inputs, device):
     return {k: v.to(device, non_blocking=True) for k, v in inputs.items()}
 
 
-def eval_on_loader(model, loader, device, fake_idx):
+def threshold_search_metrics(y_true, probs, cfg):
+    threshold, _ = find_best_threshold(
+        y_true,
+        probs,
+        metric=cfg.get("threshold_metric", "balanced_acc"),
+        threshold_start=cfg.get("threshold_search", {}).get("start", 0.30),
+        threshold_end=cfg.get("threshold_search", {}).get("end", 0.70),
+        threshold_step=cfg.get("threshold_search", {}).get("step", 0.01),
+    )
+    metrics = evaluate_predictions(y_true, probs, threshold)
+    return threshold, metrics
+
+
+def summarize_probs(name, probs, y_bin):
+    real_mask = y_bin == 0
+    fake_mask = y_bin == 1
+
+    real_mean = float(np.mean(probs[real_mask])) if np.any(real_mask) else float("nan")
+    fake_mean = float(np.mean(probs[fake_mask])) if np.any(fake_mask) else float("nan")
+    overall_mean = float(np.mean(probs)) if len(probs) else float("nan")
+
+    print(f"{name} average predicted fake-probability:")
+    print(f"  real samples   : {real_mean:.4f}")
+    print(f"  fake samples   : {fake_mean:.4f}")
+    print(f"  overall average: {overall_mean:.4f}")
+
+
+def print_model_block(title, metrics_05, metrics_search, threshold, probs, y_bin):
+    print(f"\n{title}")
+    summarize_probs(title, probs, y_bin)
+
+    print("  RAW @ 0.50")
+    msg = (
+        f"    Acc={metrics_05['acc']:.4f} | "
+        f"Balanced Acc={metrics_05['balanced_acc']:.4f}"
+    )
+    if metrics_05["auc"] is not None:
+        msg += f" | AUC={metrics_05['auc']:.4f}"
+    print(msg)
+    print(f"    Pred counts @0.5: {metrics_05['pred_counts']}")
+
+    print(f"  SEARCHED @ {threshold:.2f}")
+    msg = (
+        f"    Acc={metrics_search['acc']:.4f} | "
+        f"Balanced Acc={metrics_search['balanced_acc']:.4f}"
+    )
+    if metrics_search["auc"] is not None:
+        msg += f" | AUC={metrics_search['auc']:.4f}"
+    print(msg)
+    print(f"    Pred counts @searched: {metrics_search['pred_counts']}")
+
+
+def eval_on_loader(model, loader, device, fake_idx, cfg):
     model.eval()
     all_y = []
     all_swin_probs = []
@@ -41,27 +92,51 @@ def eval_on_loader(model, loader, device, fake_idx):
     y_bin = (y_orig == fake_idx).astype(int)
     swin_probs = np.concatenate(all_swin_probs)
     eff_probs = np.concatenate(all_eff_probs)
+    base_probs = 0.5 * swin_probs + 0.5 * eff_probs
 
-    base_ensemble_probs = 0.5 * swin_probs + 0.5 * eff_probs
-    base_threshold, _ = find_best_threshold(y_bin, base_ensemble_probs)
+    raw = {
+        "swin": evaluate_predictions(y_bin, swin_probs, 0.5),
+        "efficientnet": evaluate_predictions(y_bin, eff_probs, 0.5),
+        "base_ensemble": evaluate_predictions(y_bin, base_probs, 0.5),
+    }
+
+    searched = {}
+    searched["swin_threshold"], searched["swin_eval"] = threshold_search_metrics(y_bin, swin_probs, cfg)
+    searched["efficientnet_threshold"], searched["efficientnet_eval"] = threshold_search_metrics(y_bin, eff_probs, cfg)
+    searched["base_threshold"], searched["base_ensemble_eval"] = threshold_search_metrics(y_bin, base_probs, cfg)
 
     return {
         "y_bin": y_bin,
         "swin_probs": swin_probs,
         "efficientnet_probs": eff_probs,
-        "base_ensemble_probs": base_ensemble_probs,
-        "base_threshold": base_threshold,
-        "base_ensemble_eval": evaluate_predictions(y_bin, base_ensemble_probs, base_threshold),
-        "swin_eval": evaluate_predictions(y_bin, swin_probs, base_threshold),
-        "efficientnet_eval": evaluate_predictions(y_bin, eff_probs, base_threshold),
+        "base_ensemble_probs": base_probs,
+        "raw": raw,
+        **searched,
     }
+
+
+def print_label_sanity(train_loader, class_to_idx, fake_idx, num_batches=3):
+    print("LABEL SANITY CHECK")
+    print("class_to_idx:", class_to_idx)
+    print("fake_idx:", fake_idx)
+
+    for i, (_, y) in enumerate(train_loader):
+        raw_unique, raw_counts = torch.unique(y, return_counts=True)
+        y_bin = (y == fake_idx).int()
+        bin_unique, bin_counts = torch.unique(y_bin, return_counts=True)
+        print(f"batch={i+1} raw_unique={raw_unique.tolist()} raw_counts={raw_counts.tolist()}")
+        print(f"batch={i+1} bin_unique={bin_unique.tolist()} bin_counts={bin_counts.tolist()}")
+        print(f"batch={i+1} first_10_raw={y[:10].tolist()}")
+        print(f"batch={i+1} first_10_bin={y_bin[:10].tolist()}")
+        if i + 1 >= num_batches:
+            break
 
 
 def main():
     cfg = CONFIG
     set_seed(cfg["seed"])
     init_run_logging(cfg["log_dir"], cfg["train_log_name"])
-    log_section("ENSEMBLE V3 TRAINING")
+    log_section("ENSEMBLE V3 TRAINING WITH VALIDATION MODEL COMPARISON")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     os.makedirs(cfg["checkpoint_dir"], exist_ok=True)
@@ -73,6 +148,8 @@ def main():
     print("Post-training weight search enabled:", cfg["ensemble"].get("learn_weights_post_training", False))
     print("Swin config:", cfg["swin"])
     print("EfficientNet config:", cfg["efficientnet"])
+    print("Threshold search config:", cfg.get("threshold_search", {}))
+    print("Validation split path:", cfg.get("val_split_path"))
 
     bundle = build_dataloaders(cfg)
     train_loader = bundle["train_loader"]
@@ -96,17 +173,48 @@ def main():
     real_count = int(len(y_train_bin) - fake_count)
     print("Train split counts (real=0,fake=1):", [real_count, fake_count])
 
+    val_targets_orig = np.array(bundle["full_ds"].targets)[bundle["base_val_ds"].indices]
+    y_val_bin = (val_targets_orig == fake_idx).astype(int)
+    val_fake_count = int(y_val_bin.sum())
+    val_real_count = int(len(y_val_bin) - val_fake_count)
+    print("Val split counts (real=0,fake=1):", [val_real_count, val_fake_count])
+
+    print_label_sanity(
+        train_loader,
+        class_to_idx=class_to_idx,
+        fake_idx=fake_idx,
+        num_batches=cfg.get("debug", {}).get("label_sanity_batches", 3),
+    )
+
     model = build_ensemble_model(cfg).to(device)
     optimizer = build_optimizer(model, cfg)
+
+    eff_sched_cfg = cfg["efficientnet"].get("scheduler", {})
+    scheduler = None
+    if eff_sched_cfg.get("enabled", False):
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode=eff_sched_cfg.get("mode", "max"),
+            factor=eff_sched_cfg.get("factor", 0.5),
+            patience=eff_sched_cfg.get("patience", 1),
+            min_lr=eff_sched_cfg.get("min_lr", 1e-6),
+        )
+
     loss_fn = torch.nn.BCEWithLogitsLoss()
 
-    print("Using BCEWithLogitsLoss on 50/50 training ensemble logits")
-    print("Swin label smoothing:", cfg["swin"].get("label_smoothing", 0.0))
-    print("EfficientNet label smoothing kept at:", cfg["efficientnet"].get("label_smoothing", 0.0))
+    print("Using BCEWithLogitsLoss on branch logits only")
+    print("No pos_weight is being used")
+    print("Checkpoint selection metric: validation AUC on fixed 50/50 ensemble")
 
-    best_val_score = -1.0
+    best_val_auc = -1.0
     best_path = os.path.join(cfg["checkpoint_dir"], "best_ensemble.pt")
     train_history = []
+
+    early_cfg = cfg.get("early_stopping", {})
+    early_enabled = early_cfg.get("enabled", False)
+    patience = int(early_cfg.get("patience", 2))
+    min_delta = float(early_cfg.get("min_delta", 5e-4))
+    epochs_without_improve = 0
 
     for epoch in range(cfg["epochs"]):
         log_section(f"EPOCH {epoch + 1}/{cfg['epochs']}")
@@ -120,15 +228,13 @@ def main():
 
             eff_targets = smooth_binary_labels(y_bin, cfg["efficientnet"].get("label_smoothing", 0.0))
             swin_targets = smooth_binary_labels(y_bin, cfg["swin"].get("label_smoothing", 0.0))
-            ensemble_targets = y_bin
 
             optimizer.zero_grad(set_to_none=True)
             out = model(batch_inputs)
 
-            ensemble_loss = loss_fn(out["ensemble_logits"], ensemble_targets)
             swin_loss = loss_fn(out["swin_logits"], swin_targets)
             eff_loss = loss_fn(out["efficientnet_logits"], eff_targets)
-            loss = 0.6 * ensemble_loss + 0.2 * swin_loss + 0.2 * eff_loss
+            loss = 0.5 * swin_loss + 0.5 * eff_loss
 
             loss.backward()
             optimizer.step()
@@ -137,106 +243,114 @@ def main():
             if step % max(1, len(train_loader) // 5) == 0:
                 print(
                     f"step={step}/{len(train_loader)} "
-                    f"loss={loss.item():.4f} ensemble_loss={ensemble_loss.item():.4f} "
-                    f"swin_loss={swin_loss.item():.4f} eff_loss={eff_loss.item():.4f}"
+                    f"loss={loss.item():.4f} "
+                    f"swin_loss={swin_loss.item():.4f} "
+                    f"eff_loss={eff_loss.item():.4f}"
                 )
 
-        val_out = eval_on_loader(model, val_loader, device, fake_idx)
-        base_eval = val_out["base_ensemble_eval"]
-        swin_eval = val_out["swin_eval"]
-        eff_eval = val_out["efficientnet_eval"]
+        val_out = eval_on_loader(model, val_loader, device, fake_idx, cfg)
+        raw = val_out["raw"]
+        base_raw = raw["base_ensemble"]
+        base_searched = val_out["base_ensemble_eval"]
         epoch_time = time.time() - epoch_start
         avg_loss = float(np.mean(losses)) if losses else float("nan")
 
-        learned = run_post_training_weight_search(
-            cfg=cfg,
-            y_true=val_out["y_bin"],
-            swin_probs=val_out["swin_probs"],
-            eff_probs=val_out["efficientnet_probs"],
-            output_dir=cfg["output_dir"],
-            prefix=f"epoch_{epoch + 1:02d}_val",
-        )
-        learned_best = learned["best"]
-        learned_eval = learned["final_eval"]
-
         print(
             f"epoch={epoch + 1} train_loss={avg_loss:.4f} epoch_time={epoch_time:.1f}s "
-            f"base_val_bal_acc={base_eval['balanced_acc']:.4f} "
-            f"learned_val_bal_acc={learned_eval['balanced_acc']:.4f} "
-            f"best_w_swin={learned_best['swin_weight']:.2f} best_w_eff={learned_best['efficientnet_weight']:.2f} "
-            f"best_t={learned_best['threshold']:.2f}"
-            + (f" learned_val_auc={learned_eval['auc']:.4f}" if learned_eval["auc"] is not None else "")
+            f"base_val_auc={base_raw['auc']:.4f} "
+            f"base_val_bal_acc_at_0.5={base_raw['balanced_acc']:.4f} "
+            f"base_val_bal_acc_searched={base_searched['balanced_acc']:.4f} "
+            f"base_best_t={val_out['base_threshold']:.2f}"
         )
-        print("Val true counts (real=0,fake=1):", learned_eval["true_counts"], "Val pred counts:", learned_eval["pred_counts"])
-        print(
-            f"Val component scores | 50/50 Ensemble bal_acc={base_eval['balanced_acc']:.4f} "
-            f"Learned Ensemble bal_acc={learned_eval['balanced_acc']:.4f} "
-            f"Swin bal_acc={swin_eval['balanced_acc']:.4f} "
-            f"EfficientNet bal_acc={eff_eval['balanced_acc']:.4f}"
-        )
+        print("Val true counts (real=0,fake=1):", base_raw["true_counts"], "Val pred counts @0.5:", base_raw["pred_counts"])
+        print("Val pred counts @searched:", base_searched["pred_counts"])
 
-        top_k = cfg["ensemble"].get("top_k_to_print", 10)
-        print("Top searched ensemble weights this epoch:")
-        for row in learned["ranked"][:top_k]:
-            print(
-                f"  swin={row['swin_weight']:.2f} eff={row['efficientnet_weight']:.2f} "
-                f"thr={row['threshold']:.2f} bal_acc={row['balanced_acc']:.4f} "
-                + (f"auc={row['auc']:.4f}" if row["auc"] is not None else "auc=None")
-            )
+        print_model_block("VALIDATION SWIN ONLY", raw["swin"], val_out["swin_eval"], val_out["swin_threshold"], val_out["swin_probs"], val_out["y_bin"])
+        print_model_block("VALIDATION EFFICIENTNET ONLY", raw["efficientnet"], val_out["efficientnet_eval"], val_out["efficientnet_threshold"], val_out["efficientnet_probs"], val_out["y_bin"])
+        print_model_block("VALIDATION COMBINED 50/50", raw["base_ensemble"], val_out["base_ensemble_eval"], val_out["base_threshold"], val_out["base_ensemble_probs"], val_out["y_bin"])
 
         train_history.append({
             "epoch": epoch + 1,
             "train_loss": avg_loss,
             "epoch_time_sec": epoch_time,
-            "base_ensemble_bal_acc": float(base_eval["balanced_acc"]),
-            "learned_ensemble_bal_acc": float(learned_eval["balanced_acc"]),
-            "swin_bal_acc": float(swin_eval["balanced_acc"]),
-            "efficientnet_bal_acc": float(eff_eval["balanced_acc"]),
-            "best_swin_weight": float(learned_best["swin_weight"]),
-            "best_efficientnet_weight": float(learned_best["efficientnet_weight"]),
-            "best_threshold": float(learned_best["threshold"]),
-            "learned_ensemble_auc": None if learned_eval["auc"] is None else float(learned_eval["auc"]),
+            "base_auc": None if base_raw["auc"] is None else float(base_raw["auc"]),
+            "base_bal_acc_at_0_5": float(base_raw["balanced_acc"]),
+            "base_bal_acc_searched": float(base_searched["balanced_acc"]),
+            "base_best_threshold": float(val_out["base_threshold"]),
+            "swin_bal_acc_at_0_5": float(raw["swin"]["balanced_acc"]),
+            "efficientnet_bal_acc_at_0_5": float(raw["efficientnet"]["balanced_acc"]),
         })
 
-        if learned_eval["balanced_acc"] > best_val_score:
-            best_val_score = learned_eval["balanced_acc"]
+        current_auc = -1.0 if base_raw["auc"] is None else float(base_raw["auc"])
+        if scheduler is not None:
+            scheduler.step(current_auc)
+            print("Current learning rates:", [group["lr"] for group in optimizer.param_groups])
+
+        if current_auc > best_val_auc + min_delta:
+            best_val_auc = current_auc
+            epochs_without_improve = 0
+
             payload = {
                 "model": model.state_dict(),
                 "cfg": cfg,
                 "classes": classes,
                 "class_to_idx": class_to_idx,
                 "base_ensemble_method": cfg["ensemble"]["base_method"],
-                "best_threshold": float(learned_best["threshold"]),
+                "selection_metric": "base_val_auc",
+                "best_threshold": None,
                 "best_ensemble_weights": {
-                    "swin": float(learned_best["swin_weight"]),
-                    "efficientnet": float(learned_best["efficientnet_weight"]),
+                    "swin": 0.5,
+                    "efficientnet": 0.5,
                 },
-                "val_score": float(learned_eval["balanced_acc"]),
-                "val_auc": None if learned_eval["auc"] is None else float(learned_eval["auc"]),
-                "swin_val_auc": None if swin_eval["auc"] is None else float(swin_eval["auc"]),
-                "efficientnet_val_auc": None if eff_eval["auc"] is None else float(eff_eval["auc"]),
-                "weight_search_json": learned["json_path"],
+                "base_threshold": None,
+                "swin_threshold": None,
+                "efficientnet_threshold": None,
+                "val_score": float(current_auc),
+                "val_auc": float(current_auc),
+                "raw_val_metrics": {
+                    "swin": {
+                        "auc": raw["swin"]["auc"],
+                        "balanced_acc_at_0_5": raw["swin"]["balanced_acc"],
+                    },
+                    "efficientnet": {
+                        "auc": raw["efficientnet"]["auc"],
+                        "balanced_acc_at_0_5": raw["efficientnet"]["balanced_acc"],
+                    },
+                    "base_ensemble": {
+                        "auc": raw["base_ensemble"]["auc"],
+                        "balanced_acc_at_0_5": raw["base_ensemble"]["balanced_acc"],
+                    },
+                },
             }
+
             if cfg.get("save_val_outputs", True):
                 payload["val_outputs"] = {
                     "y_bin": val_out["y_bin"].tolist(),
                     "swin_probs": val_out["swin_probs"].tolist(),
                     "efficientnet_probs": val_out["efficientnet_probs"].tolist(),
                     "base_ensemble_probs": val_out["base_ensemble_probs"].tolist(),
-                    "learned_ensemble_probs": learned_best["probs"].tolist(),
                 }
+
             torch.save(payload, best_path)
-            print("Saved best checkpoint:", best_path)
+            print("Saved best checkpoint by val AUC:", best_path)
+
+        else:
+            epochs_without_improve += 1
+            print(f"No significant improvement for {epochs_without_improve} epoch(s)")
+
+        if early_enabled and epochs_without_improve >= patience:
+            print(f"Early stopping triggered after epoch {epoch + 1}")
+            break
 
     summary_path = os.path.join(cfg["output_dir"], "train_summary.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(
             {
-                "best_val_score": float(best_val_score),
+                "best_val_auc": float(best_val_auc),
                 "checkpoint": best_path,
                 "base_ensemble_method": cfg["ensemble"]["base_method"],
                 "initial_ensemble_weights": cfg["ensemble"]["initial_weights"],
-                "post_training_weight_search": cfg["ensemble"].get("learn_weights_post_training", False),
+                "post_training_weight_search": False,
                 "swin_config": cfg["swin"],
                 "efficientnet_config": cfg["efficientnet"],
                 "epochs": train_history,

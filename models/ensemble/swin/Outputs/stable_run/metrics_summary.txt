@@ -1,0 +1,9 @@
+best_epoch=3
+best_val_loss=0.030890
+best_threshold=0.40
+test_loss=1.321503
+test_acc=0.797621
+test_bal_acc=0.806183
+roc_auc=0.933734
+average_precision=0.876563
+confusion_matrix=[[7003, 4374], [33, 10366]]

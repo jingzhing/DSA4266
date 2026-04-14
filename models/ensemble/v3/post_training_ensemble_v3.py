@@ -6,6 +6,8 @@ from ensemble_metrics_v3 import evaluate_predictions, search_best_ensemble_weigh
 
 def run_post_training_weight_search(cfg, y_true, swin_probs, eff_probs, output_dir, prefix="val"):
     ensemble_cfg = cfg["ensemble"]
+    threshold_cfg = cfg.get("threshold_search", {})
+
     best, ranked = search_best_ensemble_weight(
         y_true=y_true,
         swin_probs=swin_probs,
@@ -14,6 +16,9 @@ def run_post_training_weight_search(cfg, y_true, swin_probs, eff_probs, output_d
         weight_start=ensemble_cfg.get("weight_search_start", 0.0),
         weight_end=ensemble_cfg.get("weight_search_end", 1.0),
         weight_step=ensemble_cfg.get("weight_search_step", 0.02),
+        threshold_start=threshold_cfg.get("start", 0.01),
+        threshold_end=threshold_cfg.get("end", 0.99),
+        threshold_step=threshold_cfg.get("step", 0.01),
     )
 
     final_eval = evaluate_predictions(y_true, best["probs"], best["threshold"])
@@ -40,7 +45,9 @@ def run_post_training_weight_search(cfg, y_true, swin_probs, eff_probs, output_d
                     "efficientnet_weight": best["efficientnet_weight"],
                     "threshold": best["threshold"],
                     "score": best["score"],
-                    "auc": best["auc"],
+                    "balanced_acc": final_eval["balanced_acc"],
+                    "acc": final_eval["acc"],
+                    "auc": final_eval["auc"],
                 },
                 "top_ranked": serializable_ranked,
             },

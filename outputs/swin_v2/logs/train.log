@@ -1,0 +1,26 @@
+Run started: 2026-04-13 17:00:35
+Logging to: outputs\swin_v2\logs\train.log
+
+========================================================================
+TRAIN swin_tiny_v2
+========================================================================
+
+========================================================================
+DATA SUMMARY
+========================================================================
+Device: cuda
+Classes: ['fake', 'real']
+Mapping: {'fake': 0, 'real': 1}
+Train split size: 81368
+Val split size: 9041
+Test size: 21776
+Model config: {'arch': 'swin_tiny_patch4_window7_224', 'img_size': 224, 'dropout': 0.2, 'drop_path_rate': 0.2, 'freeze_backbone': False}
+Train config: {'epochs': 12, 'lr': 0.0001, 'weight_decay': 5e-05, 'label_smoothing': 0.05, 'optimizer': 'adamw', 'early_stopping_patience': 3, 'early_stopping_min_delta': 0.0005, 'scheduler': None}
+epoch=1 train_loss=0.2486 val_auc=0.9995 val_bal_acc_0.5=0.9912 val_bal_acc_best=0.9919 best_t=0.35 time=386.2s
+Val true counts: [4882 4159] Val pred counts @0.5: [4905 4136]
+Val pred counts @best_t: [4872 4169]
+Saved best checkpoint: models/swin/v2/checkpoints\best.pt
+epoch=2 train_loss=0.1776 val_auc=1.0000 val_bal_acc_0.5=0.9973 val_bal_acc_best=0.9974 best_t=0.49 time=400.4s
+Val true counts: [4882 4159] Val pred counts @0.5: [4871 4170]
+Val pred counts @best_t: [4870 4171]
+No significant improvement for 1 epoch(s)

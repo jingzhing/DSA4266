@@ -1,0 +1,25 @@
+threshold=0.8000
+accuracy=0.779069
+balanced_accuracy=0.788346
+roc_auc=0.976391
+average_precision=0.962764
+
+classification_report
+              precision    recall  f1-score   support
+
+        Real     0.9921    0.5818    0.7334     11377
+        Fake     0.6850    0.9949    0.8114     10399
+
+    accuracy                         0.7791     21776
+   macro avg     0.8385    0.7883    0.7724     21776
+weighted avg     0.8454    0.7791    0.7707     21776
+
+confusion_matrix
+[[ 6619  4758]
+ [   53 10346]]
+
+threshold_checks
+thr=0.30, acc=0.691082, bal_acc=0.704298, cm=[[4665, 6712], [15, 10384]]
+thr=0.40, acc=0.707292, bal_acc=0.719795, cm=[[5022, 6355], [19, 10380]]
+thr=0.50, acc=0.721850, bal_acc=0.733698, cm=[[5346, 6031], [26, 10373]]
+thr=0.60, acc=0.737739, bal_acc=0.748887, cm=[[5696, 5681], [30, 10369]]

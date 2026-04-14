@@ -1,0 +1,19 @@
+threshold=0.6500
+accuracy=0.531548
+balanced_accuracy=0.551605
+roc_auc=0.838705
+average_precision=0.786517
+
+classification_report
+              precision    recall  f1-score   support
+
+        Real     0.9843    0.1050    0.1898     11377
+        Fake     0.5048    0.9982    0.6705     10399
+
+    accuracy                         0.5315     21776
+   macro avg     0.7446    0.5516    0.4302     21776
+weighted avg     0.7554    0.5315    0.4194     21776
+
+confusion_matrix
+[[ 1195 10182]
+ [   19 10380]]

@@ -1,0 +1,37 @@
+Run started: 2026-04-13 19:20:30
+Logging to: outputs\efficientnet_b2_v2_deepdetect\logs\test.log
+
+========================================================================
+TEST efficientnet_b2_v2_deepdetect
+========================================================================
+Classes: ['fake', 'real']
+Mapping: {'fake': 0, 'real': 1}
+Best threshold: 0.48
+Prob means | real=0.7671 fake=0.9922 gap=0.2251
+RAW @ 0.50
+[[ 2265  9107]
+ [   47 10347]]
+              precision    recall  f1-score   support
+
+     real(0)     0.9797    0.1992    0.3310     11372
+     fake(1)     0.5319    0.9955    0.6933     10394
+
+    accuracy                         0.5794     21766
+   macro avg     0.7558    0.5973    0.5122     21766
+weighted avg     0.7658    0.5794    0.5040     21766
+
+Acc=0.5794 | Balanced Acc=0.5973 | AUC=0.8825
+SEARCHED THRESHOLD
+[[ 2182  9190]
+ [   45 10349]]
+              precision    recall  f1-score   support
+
+     real(0)     0.9798    0.1919    0.3209     11372
+     fake(1)     0.5297    0.9957    0.6915     10394
+
+    accuracy                         0.5757     21766
+   macro avg     0.7547    0.5938    0.5062     21766
+weighted avg     0.7648    0.5757    0.4979     21766
+
+Acc=0.5757 | Balanced Acc=0.5938 | AUC=0.8825
+Saved diagnostics to: outputs/efficientnet_b2_v2_deepdetect\diagnostics

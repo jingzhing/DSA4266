@@ -1,0 +1,38 @@
+Run started: 2026-04-13 18:26:34
+Logging to: outputs\efficientnet_b2_v2\logs\test.log
+
+========================================================================
+TEST efficientnet_b2_v2
+========================================================================
+Classes: ['real', 'fake']
+Mapping: {'real': 0, 'fake': 1}
+Best threshold: 0.88
+Prob means | real=0.7139 fake=0.9924 gap=0.2785
+RAW @ 0.50
+[[ 2960  8417]
+ [   47 10352]]
+              precision    recall  f1-score   support
+
+     real(0)     0.9844    0.2602    0.4116     11377
+     fake(1)     0.5515    0.9955    0.7098     10399
+
+    accuracy                         0.6113     21776
+   macro avg     0.7680    0.6278    0.5607     21776
+weighted avg     0.7777    0.6113    0.5540     21776
+
+Acc=0.6113 | Balanced Acc=0.6278 | AUC=0.9336
+
+SEARCHED THRESHOLD
+[[ 5903  5474]
+ [  159 10240]]
+              precision    recall  f1-score   support
+
+     real(0)     0.9738    0.5189    0.6770     11377
+     fake(1)     0.6516    0.9847    0.7843     10399
+
+    accuracy                         0.7413     21776
+   macro avg     0.8127    0.7518    0.7306     21776
+weighted avg     0.8199    0.7413    0.7282     21776
+
+Acc=0.7413 | Balanced Acc=0.7518 | AUC=0.9336
+Saved diagnostics to: outputs/efficientnet_b2_v2\diagnostics

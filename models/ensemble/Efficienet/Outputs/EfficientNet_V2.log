@@ -1,0 +1,13 @@
+Run started: 2026-04-13 19:37:01
+Logging to: C:\Users\jz\DSA4266\DSA4266\models\efficientnet\EfficientNet_V2.log
+KAGGLEHUB_CACHE_DIR=/mnt/sdd/kaggle_cache | free=102.4 GB
+Number of devices in strategy: 1
+Using local dataset at: C:\Users\jz\DSA4266\DSA4266\data\deepdetect-2025
+DONE WITH DATA
+Train 72319 | Val 18080 | Test 21766
+
+============================================================
+EXPERIMENT 1 — Training Type Comparison
+============================================================
+
+Training Type = head
