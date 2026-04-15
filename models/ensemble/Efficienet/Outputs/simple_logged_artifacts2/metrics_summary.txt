@@ -1,0 +1,19 @@
+test_loss=0.376477
+test_acc=0.887123
+test_bal_acc=0.890210
+roc_auc=0.958315
+average_precision=0.942806
+
+classification_report
+              precision    recall  f1-score   support
+
+        Real     0.9563    0.8215    0.8838     11377
+        Fake     0.8308    0.9589    0.8903     10399
+
+    accuracy                         0.8871     21776
+   macro avg     0.8936    0.8902    0.8870     21776
+weighted avg     0.8964    0.8871    0.8869     21776
+
+confusion_matrix
+[[9346 2031]
+ [ 427 9972]]

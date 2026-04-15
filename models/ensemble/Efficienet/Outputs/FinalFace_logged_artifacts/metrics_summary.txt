@@ -1,0 +1,24 @@
+use_face_crop=True
+face_margin=0.25
+face_min_size=40
+test_loss=0.301480
+test_acc=0.892221
+test_bal_acc=0.895547
+roc_auc=0.974504
+average_precision=0.970891
+test_face_rate=0.942643
+face_preview_saved=24
+
+classification_report
+              precision    recall  f1-score   support
+
+        Real     0.9673    0.8215    0.8884     11377
+        Fake     0.8323    0.9696    0.8957     10399
+
+    accuracy                         0.8922     21776
+   macro avg     0.8998    0.8955    0.8921     21776
+weighted avg     0.9028    0.8922    0.8919     21776
+
+confusion_matrix
+[[ 9346  2031]
+ [  316 10083]]
